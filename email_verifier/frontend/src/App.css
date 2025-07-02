@@ -1,0 +1,56 @@
+.App {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+  font-family: sans-serif;
+  background-color: #f4f7f6;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.App-header {
+  background-color: #003d8f; /* IONOS Blue */
+  color: white;
+  padding: 20px;
+  text-align: center;
+  border-radius: 8px 8px 0 0;
+  margin-bottom: 20px;
+}
+
+.App-header h1 {
+  margin: 0;
+  font-size: 2em;
+}
+
+.App-main {
+  background-color: #ffffff;
+  padding: 20px;
+  border-radius: 0 0 8px 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  flex-grow: 1;
+}
+
+.error-message {
+  color: #D8000C; /* Red for errors */
+  background-color: #FFD2D2;
+  border: 1px solid #D8000C;
+  padding: 10px;
+  border-radius: 4px;
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.App-footer {
+  text-align: center;
+  padding: 20px;
+  font-size: 0.9em;
+  color: #777;
+  margin-top: auto;
+}
+
+/* General body styling if needed, or can be in index.css */
+body {
+  margin: 0;
+  background-color: #e9ecef; /* Light grey background for the whole page */
+}

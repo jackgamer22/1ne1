@@ -1,0 +1,34 @@
+.progress-bar-container {
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.progress-bar-outer {
+  width: 100%;
+  background-color: #e9ecef;
+  border-radius: 4px;
+  height: 25px;
+  overflow: hidden; /* Ensures the inner bar corners are also rounded */
+}
+
+.progress-bar-inner {
+  background-color: #28a745; /* Green for progress */
+  width: 0%; /* Initial width */
+  height: 100%;
+  line-height: 25px; /* Vertically center text */
+  color: white;
+  text-align: center;
+  transition: width 0.4s ease;
+  border-radius: 4px 0 0 4px; /* Round left corners */
+}
+
+.progress-bar-inner:only-child { /* When width is 100% */
+  border-radius: 4px; /* Round all corners */
+}
+
+
+.progress-text {
+  margin-top: 8px;
+  font-size: 0.9em;
+  color: #333;
+}
