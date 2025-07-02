@@ -1,57 +1,58 @@
-.file-upload-container {
-  border: 2px dashed #ccc;
+/* Styles for the new FileUpload.js which uses a form with class "upload-form" */
+.upload-form {
+  border: 1px solid #ddd;
   border-radius: 8px;
   padding: 20px;
   text-align: center;
   margin-bottom: 20px;
-  position: relative;
   background-color: #f9f9f9;
 }
 
-.file-upload-container.drag-active {
-  border-color: #007bff;
-  background-color: #e9f5ff;
+.upload-form h2 {
+  margin-top: 0;
+  margin-bottom: 15px;
+  font-size: 1.4em;
+  color: #333;
 }
 
-#file-upload-input {
-  display: none; /* Hide the actual input */
-}
-
-.file-upload-label {
-  cursor: pointer;
+.upload-form input[type="file"] {
   display: block;
+  margin: 0 auto 15px auto;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  max-width: 100%; /* Ensure it doesn't overflow small containers */
 }
 
-.file-upload-label p {
-  margin: 0 0 10px 0;
-}
-
-.upload-button {
+.upload-button { /* This class name is reused, style might be similar */
   background-color: #007bff;
   color: white;
-  padding: 10px 15px;
+  padding: 10px 20px;
   border: none;
   border-radius: 4px;
   cursor: pointer;
   font-size: 1em;
+  transition: background-color 0.2s ease;
 }
 
-.upload-button:hover {
+.upload-button:hover:not(:disabled) {
   background-color: #0056b3;
 }
 
 .upload-button:disabled {
   background-color: #ccc;
   cursor: not-allowed;
+  opacity: 0.7;
 }
 
-.drag-file-element {
-  position: absolute;
-  width: 100%;
-  height: 100%;
-  border-radius: 1rem;
-  top: 0px;
-  right: 0px;
-  bottom: 0px;
-  left: 0px;
+/* Error message styling specific to FileUpload, if different from App.css */
+/* Using .error-message from App.css is also an option if consistent styling is desired */
+.upload-form .error {
+  color: #D8000C;
+  background-color: #FFD2D2;
+  border: 1px solid #D8000C;
+  padding: 8px;
+  border-radius: 4px;
+  margin-top: 15px;
+  font-size: 0.9em;
 }

@@ -6,20 +6,19 @@ import ProgressBar from './components/ProgressBar';
 import ExportResults from './components/ExportResults';
 
 function App() {
-  const [file, setFile] = useState(null);
+  // No longer need 'file' state here for triggering upload, FileUpload handles its own selection
   const [taskId, setTaskId] = useState(null);
   const [stats, setStats] = useState({});
   const [progress, setProgress] = useState(0);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false); // True when backend is processing
   const [error, setError] = useState('');
   const [isCompleted, setIsCompleted] = useState(false);
 
-  const handleFileSelect = (selectedFile) => {
-    setFile(selectedFile);
-    setTaskId(null);
-    setStats({});
+  const handleUploadSuccess = (newTaskId) => {
+    setTaskId(newTaskId);
+    setStats({}); // Reset stats for new task
     setProgress(0);
-    setIsProcessing(true); // Set processing true when file is selected to trigger upload
+    setIsProcessing(true); // Start polling and show processing UI in App
     setIsCompleted(false);
     setError('');
   };
@@ -32,40 +31,7 @@ function App() {
     }
   };
 
-  // Effect for file upload
-  useEffect(() => {
-    if (file && isProcessing && !taskId) { // Only upload if file is set, processing is true, and no taskId yet
-      const uploadFile = async () => {
-        const formData = new FormData();
-        formData.append('file', file);
-
-        try {
-          // Assuming backend is running on port 5000
-          const response = await fetch('http://localhost:5000/upload', {
-            method: 'POST',
-            body: formData,
-          });
-
-          if (!response.ok) {
-            const errData = await response.json();
-            throw new Error(errData.error || `HTTP error! status: ${response.status}`);
-          }
-
-          const data = await response.json();
-          setTaskId(data.task_id);
-          // setIsProcessing(true); // Already set
-          setFile(null); // Clear the file state after successful upload trigger
-        } catch (err) {
-          setError(`Upload failed: ${err.message}`);
-          setIsProcessing(false);
-          setFile(null);
-        }
-      };
-      uploadFile();
-    }
-  }, [file, isProcessing, taskId]);
-
-  // Effect for polling status
+  // Effect for polling status - This remains largely the same
   useEffect(() => {
     let intervalId;
     if (taskId && isProcessing) {
@@ -108,12 +74,18 @@ function App() {
         <h1>Email Verifier</h1>
       </header>
       <main className="App-main">
-        <FileUpload onFileSelect={handleFileSelect} processing={isProcessing && !isCompleted} />
+        {/* FileUpload now handles its own upload state, but App still controls overall processing UI via 'isProcessing' */}
+        {/* The 'processing' prop for FileUpload now indicates if the *backend* is busy, so user can't submit another file. */}
+        <FileUpload onUploadSuccess={handleUploadSuccess} processing={isProcessing} />
+
         {error && <p className="error-message">Error: {error}</p>}
-        {(isProcessing || isCompleted || Object.keys(stats).length > 0) && (
+
+        {/* Show progress and stats if processing OR if completed (to see final stats) */}
+        {(isProcessing || isCompleted || taskId) && (Object.keys(stats).length > 0 || isProcessing) && (
           <>
-            <ProgressBar progress={progress} processing={isProcessing && !isCompleted} />
+            <ProgressBar progress={progress} processing={isProcessing} />
             <StatsDisplay stats={stats} />
+            {/* ExportResults is shown when completed */}
             <ExportResults taskId={taskId} onExport={handleExport} isCompleted={isCompleted} />
           </>
         )}
