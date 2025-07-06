@@ -5,44 +5,36 @@ This application provides a web interface for managing email campaigns,
 viewing statistics, and user authentication. It uses Flask, SQLAlchemy for
 database interactions, and Flask-Login for session management.
 It interacts with sender.py for the email sending logic.
+
+Refactored to use the application factory pattern (create_app).
 """
 import os
 import json
 from datetime import datetime
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, make_response
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-from werkzeug.utils import secure_filename # For file uploads
-import threading # To run sender in background
+from werkzeug.utils import secure_filename
+import threading
+import base64
 
 # Import sender functionalities (assuming sender.py is in the same directory)
 try:
-    from sender import bulk_send_emails, SMTP_SERVERS, FROM_NAMES, FROM_EMAILS, SUBJECTS, TRACKING_DOMAIN
+    from sender import bulk_send_emails, SMTP_SERVERS as SENDER_SMTP_SERVERS, \
+                       FROM_NAMES as SENDER_FROM_NAMES, FROM_EMAILS as SENDER_FROM_EMAILS, \
+                       SUBJECTS as SENDER_SUBJECTS, TRACKING_DOMAIN as SENDER_TRACKING_DOMAIN
 except ImportError:
     print("CRITICAL: sender.py not found or contains errors. App may not function correctly.")
-    # Define placeholders if sender.py is missing, to allow app to start for basic UI dev
     def bulk_send_emails(*args, **kwargs): return {"success": 0, "failed": 0, "details": []}
-    SMTP_SERVERS = []
-    FROM_NAMES = []
-    FROM_EMAILS = []
-    SUBJECTS = []
-    TRACKING_DOMAIN = "http://localhost:5000"
+    SENDER_SMTP_SERVERS, SENDER_FROM_NAMES, SENDER_FROM_EMAILS, SENDER_SUBJECTS, SENDER_TRACKING_DOMAIN = [], [], [], [], "http://localhost:5000"
 
+# --- Database and Login Manager Instances (Initialize in create_app) ---
+db = SQLAlchemy()
+login_manager = LoginManager()
 
-# --- App Configuration ---
-# Explicitly set template_folder, though 'templates' is the default if app.py is in 'bulk_emailer'
-app = Flask(__name__, template_folder='templates')
-app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'dev_secret_key_!@#$%^&*()_BULK') # Change in production!
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///bulk_emailer.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['UPLOAD_FOLDER'] = 'uploads' # For attachments
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-
-
-# --- Database Setup ---
-db = SQLAlchemy(app)
-
+# --- Models ---
+# Defined globally, but SQLAlchemy engine is configured in create_app via db.init_app(app)
 class User(UserMixin, db.Model):
     """User model for authentication and authorization."""
     id = db.Column(db.Integer, primary_key=True)
@@ -51,11 +43,9 @@ class User(UserMixin, db.Model):
     is_admin = db.Column(db.Boolean, default=False)
 
     def set_password(self, password: str):
-        """Hashes and sets the user's password."""
         self.password_hash = generate_password_hash(password)
 
     def check_password(self, password: str) -> bool:
-        """Verifies the given password against the stored hash."""
         return check_password_hash(self.password_hash, password)
 
 class Campaign(db.Model):
@@ -65,16 +55,13 @@ class Campaign(db.Model):
     subject = db.Column(db.String(255), nullable=False)
     html_body = db.Column(db.Text, nullable=False)
     text_body = db.Column(db.Text, nullable=True)
-    recipients = db.Column(db.Text, nullable=False) # Store as JSON list or comma-separated
-    attachments_json = db.Column(db.Text, nullable=True) # Store list of attachment paths/info as JSON
+    recipients = db.Column(db.Text, nullable=False)
+    attachments_json = db.Column(db.Text, nullable=True)
     link_url = db.Column(db.String(500), nullable=True)
-
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     user = db.relationship('User', backref=db.backref('campaigns', lazy=True))
-
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    status = db.Column(db.String(50), default="Pending") # e.g., Pending, Sending, Sent, Failed
-
+    status = db.Column(db.String(50), default="Pending")
     total_sent = db.Column(db.Integer, default=0)
     total_success = db.Column(db.Integer, default=0)
     total_failed = db.Column(db.Integer, default=0)
@@ -82,446 +69,428 @@ class Campaign(db.Model):
 class EmailTrack(db.Model):
     """EmailTrack model to log email open events."""
     id = db.Column(db.Integer, primary_key=True)
-    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=True) # Can be null if tracking non-campaign emails
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=True)
     recipient_email = db.Column(db.String(255), nullable=False, index=True)
     opened_at = db.Column(db.DateTime, default=datetime.utcnow)
     ip_address = db.Column(db.String(100), nullable=True)
     user_agent = db.Column(db.String(255), nullable=True)
-
     campaign = db.relationship('Campaign', backref=db.backref('opens', lazy='dynamic'))
 
-
-# --- Login Manager Setup ---
-login_manager = LoginManager()
-login_manager.init_app(app)
-login_manager.login_view = 'login' # Route to redirect to if @login_required is hit by an unauthenticated user.
-
-@login_manager.user_loader
-def load_user(user_id: str) -> User:
-    """Flask-Login user loader callback."""
-    return User.query.get(int(user_id))
-
-# --- Global Variables / State ---
-# campaign_sending_status: Dictionary to hold real-time progress of active campaigns.
-# Structure: {campaign_id: {"name": str, "total": int, "sent_count": int, "success_count": int, "failed_count": int, "status": str}}
-# Note: For production, a more robust solution like Redis or a dedicated task queue (Celery/RQ)
-# would be preferable for managing and reporting sending status.
-campaign_sending_status = {}
+# --- Global In-Memory State (Consider alternatives for production) ---
+campaign_sending_status = {} # campaign_id: {"name": str, "total": int, ...}
 
 
-# --- Routes ---
+# --- Application Factory ---
+def create_app(config_dict: dict):
+    """
+    Factory function to create and configure the Flask application.
+    """
+    app = Flask(__name__, template_folder='templates')
+    app.config.from_mapping(config_dict) # Load config from argument
 
-# --- Authentication Routes ---
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    """Handles user login."""
-    if current_user.is_authenticated:
-        return redirect(url_for('dashboard'))
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        user = User.query.filter_by(username=username).first()
-        if user and user.check_password(password):
-            login_user(user)
-            flash('Logged in successfully!', 'success')
+    # Configure UPLOAD_FOLDER (create if it doesn't exist)
+    app.config.setdefault('UPLOAD_FOLDER', 'uploads')
+    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+    # Configure Database URI if not already set by environment
+    app.config.setdefault('SQLALCHEMY_DATABASE_URI', 'sqlite:///bulk_emailer.db')
+    app.config.setdefault('SQLALCHEMY_TRACK_MODIFICATIONS', False)
+
+
+    db.init_app(app)
+    login_manager.init_app(app)
+    login_manager.login_view = 'login' # Route for @login_required
+
+    @login_manager.user_loader
+    def load_user(user_id: str) -> User:
+        return User.query.get(int(user_id))
+
+    # --- Routes (defined within create_app to have access to 'app') ---
+    @app.route('/login', methods=['GET', 'POST'])
+    def login():
+        if current_user.is_authenticated:
             return redirect(url_for('dashboard'))
-        else:
-            flash('Invalid username or password.', 'danger')
-    return render_template('login.html')
+        if request.method == 'POST':
+            username = request.form['username']
+            password = request.form['password']
+            user = User.query.filter_by(username=username).first()
+            if user and user.check_password(password):
+                login_user(user)
+                flash('Logged in successfully!', 'success')
+                return redirect(url_for('dashboard'))
+            else:
+                flash('Invalid username or password.', 'danger')
+        return render_template('login.html')
 
-@app.route('/logout')
-@login_required
-def logout():
-    """Handles user logout."""
-    logout_user()
-    flash('Logged out successfully.', 'success')
-    return redirect(url_for('login'))
-
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    """Handles new user registration. The first registered user becomes an admin."""
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        existing_user = User.query.filter_by(username=username).first()
-        if existing_user:
-            flash('Username already exists.', 'warning')
-            return redirect(url_for('register'))
-
-        new_user = User(username=username)
-        new_user.set_password(password)
-        # Make the first registered user an admin
-        if User.query.count() == 0:
-            new_user.is_admin = True
-            flash('Admin user registered successfully! Please log in.', 'success')
-        else:
-            new_user.is_admin = False # Or based on some other logic
-            flash('User registered successfully! Please log in.', 'success')
-
-        db.session.add(new_user)
-        db.session.commit()
+    @app.route('/logout')
+    @login_required
+    def logout():
+        logout_user()
+        flash('Logged out successfully.', 'success')
         return redirect(url_for('login'))
-    return render_template('register.html')
 
-# --- Main Application Routes ---
-@app.route('/')
-@login_required
-def index():
-    """Redirects authenticated users to the dashboard."""
-    return redirect(url_for('dashboard'))
+    @app.route('/register', methods=['GET', 'POST'])
+    def register():
+        if request.method == 'POST':
+            username = request.form['username']
+            password = request.form['password']
+            existing_user = User.query.filter_by(username=username).first()
+            if existing_user:
+                flash('Username already exists.', 'warning')
+                return redirect(url_for('register'))
 
-@app.route('/dashboard')
-@login_required
-def dashboard():
-    """Displays the main dashboard with aggregated stats and charts for the logged-in user."""
-    # Basic counts for display
-    total_campaigns = Campaign.query.filter_by(user_id=current_user.id).count()
+            new_user = User(username=username)
+            new_user.set_password(password)
+            if User.query.count() == 0: # First user is admin
+                new_user.is_admin = True
+                flash('Admin user registered successfully! Please log in.', 'success')
+            else:
+                flash('User registered successfully! Please log in.', 'success')
 
-    # Aggregate stats from campaigns for the current user
-    user_campaigns = Campaign.query.filter_by(user_id=current_user.id).all()
-    total_sent_overall = sum(c.total_sent or 0 for c in user_campaigns)
-    total_success_overall = sum(c.total_success or 0 for c in user_campaigns)
-    total_failed_overall = sum(c.total_failed or 0 for c in user_campaigns)
+            db.session.add(new_user)
+            db.session.commit()
+            return redirect(url_for('login'))
+        return render_template('register.html')
 
-    # Total opens for campaigns initiated by the current user
-    total_opens_overall = db.session.query(db.func.count(EmailTrack.id))\
-                            .join(Campaign)\
-                            .filter(Campaign.user_id == current_user.id)\
-                            .scalar() or 0
+    @app.route('/')
+    @login_required
+    def index():
+        return redirect(url_for('dashboard'))
 
-    # Data for Chart.js (Example: Success vs Failed for all user campaigns)
-    chart_data = {
-        "labels": ["Success", "Failed", "Not Yet Sent/Accounted"],
-        "datasets": [{
-            "label": "Email Status",
-            "data": [
-                total_success_overall,
-                total_failed_overall,
-                total_sent_overall - (total_success_overall + total_failed_overall) # Emails sent but status not yet fully updated or pending
-            ],
-            "backgroundColor": [
-                'rgba(75, 192, 192, 0.7)', # Success - Green
-                'rgba(255, 99, 132, 0.7)', # Failed - Red
-                'rgba(201, 203, 207, 0.7)'  # Pending/Other - Grey
-            ],
-            "borderColor": [
-                'rgba(75, 192, 192, 1)',
-                'rgba(255, 99, 132, 1)',
-                'rgba(201, 203, 207, 1)'
-            ],
-            "borderWidth": 1
-        }]
-    }
+    @app.route('/dashboard')
+    @login_required
+    def dashboard():
+        total_campaigns = Campaign.query.filter_by(user_id=current_user.id).count()
+        user_campaigns = Campaign.query.filter_by(user_id=current_user.id).all()
+        total_sent_overall = sum(c.total_sent or 0 for c in user_campaigns)
+        total_success_overall = sum(c.total_success or 0 for c in user_campaigns)
+        total_failed_overall = sum(c.total_failed or 0 for c in user_campaigns)
+        total_opens_overall = db.session.query(db.func.count(EmailTrack.id))\
+                                .join(Campaign)\
+                                .filter(Campaign.user_id == current_user.id)\
+                                .scalar() or 0
+        chart_data = {
+            "labels": ["Success", "Failed", "Not Yet Sent/Accounted"],
+            "datasets": [{
+                "label": "Email Status",
+                "data": [
+                    total_success_overall,
+                    total_failed_overall,
+                    max(0, total_sent_overall - (total_success_overall + total_failed_overall))
+                ],
+                "backgroundColor": ['rgba(75, 192, 192, 0.7)', 'rgba(255, 99, 132, 0.7)', 'rgba(201, 203, 207, 0.7)'],
+                "borderColor": ['rgba(75, 192, 192, 1)', 'rgba(255, 99, 132, 1)', 'rgba(201, 203, 207, 1)'],
+                "borderWidth": 1
+            }]
+        }
+        recent_campaigns = Campaign.query.filter_by(user_id=current_user.id).order_by(Campaign.created_at.desc()).limit(5).all()
+        return render_template('dashboard.html',
+                               total_campaigns=total_campaigns, total_sent=total_sent_overall,
+                               total_success=total_success_overall, total_failed=total_failed_overall,
+                               total_opens=total_opens_overall, chart_data=json.dumps(chart_data),
+                               recent_campaigns=recent_campaigns, campaign_sending_status=campaign_sending_status)
 
-    recent_campaigns = Campaign.query.filter_by(user_id=current_user.id).order_by(Campaign.created_at.desc()).limit(5).all()
+    @app.route('/campaigns', methods=['GET', 'POST'])
+    @login_required
+    def manage_campaigns():
+        if request.method == 'POST':
+            name = request.form.get('name') or f"Campaign_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+            subject = request.form['subject']
+            html_body = request.form['html_body']
+            text_body = request.form.get('text_body', '')
+            recipients_str = request.form['recipients']
+            link_url = request.form.get('link_url', '')
+            uploaded_files_info = []
+            if 'attachments' in request.files:
+                files = request.files.getlist('attachments')
+                for file_item in files:
+                    if file_item and file_item.filename:
+                        filename = secure_filename(file_item.filename)
+                        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                        file_item.save(filepath)
+                        uploaded_files_info.append({'path': filepath, 'filename': filename, 'type': file_item.mimetype})
 
-    return render_template('dashboard.html',
-                           total_campaigns=total_campaigns,
-                           total_sent=total_sent_overall,
-                           total_success=total_success_overall,
-                           total_failed=total_failed_overall,
-                           total_opens=total_opens_overall,
-                           chart_data=json.dumps(chart_data),
-                           recent_campaigns=recent_campaigns,
-                           campaign_sending_status=campaign_sending_status)
+            new_campaign = Campaign(name=name, subject=subject, html_body=html_body, text_body=text_body,
+                                    recipients=recipients_str,
+                                    attachments_json=json.dumps(uploaded_files_info) if uploaded_files_info else None,
+                                    link_url=link_url, user_id=current_user.id, status="Pending")
+            db.session.add(new_campaign)
+            db.session.commit()
+            flash(f'Campaign "{name}" created successfully!', 'success')
+            return redirect(url_for('manage_campaigns'))
 
+        campaigns = Campaign.query.filter_by(user_id=current_user.id).order_by(Campaign.created_at.desc()).all()
+        # Use SENDER_ variables for defaults if app config doesn't override them
+        return render_template('campaigns.html', campaigns=campaigns,
+                                smtp_configured=bool(app.config.get('SENDER_SMTP_SERVERS', SENDER_SMTP_SERVERS)),
+                                from_names=app.config.get('SENDER_FROM_NAMES', SENDER_FROM_NAMES),
+                                from_emails=app.config.get('SENDER_FROM_EMAILS', SENDER_FROM_EMAILS),
+                                subjects=app.config.get('SENDER_SUBJECTS', SENDER_SUBJECTS))
 
-@app.route('/campaigns', methods=['GET', 'POST'])
-@login_required
-def manage_campaigns():
-    """
-    Handles creation of new campaigns (POST) and listing of existing
-    campaigns for the current user (GET).
-    """
-    if request.method == 'POST': # Create new campaign
-        name = request.form.get('name') or f"Campaign_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}" # Auto-generate name if empty
-        subject = request.form['subject']
-        html_body = request.form['html_body']
-        text_body = request.form.get('text_body', '') # Optional
-        recipients_str = request.form['recipients'] # Expect comma-separated emails
-        link_url = request.form.get('link_url', '')
+    @app.route('/campaign/<int:campaign_id>/send', methods=['POST'])
+    @login_required
+    def send_campaign(campaign_id: int):
+        campaign = Campaign.query.get_or_404(campaign_id)
+        if campaign.user_id != current_user.id and not current_user.is_admin:
+            flash('You do not have permission to send this campaign.', 'danger')
+            return redirect(url_for('manage_campaigns'))
 
-        # Handle attachments
-        uploaded_files_info = []
-        if 'attachments' in request.files:
-            files = request.files.getlist('attachments')
-            for file in files:
-                if file and file.filename:
-                    filename = secure_filename(file.filename)
-                    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-                    file.save(filepath)
-                    # Store info needed by sender.py; adjust if sender.py expects different dict structure
-                    uploaded_files_info.append({'path': filepath, 'filename': filename, 'type': file.mimetype})
+        active_smtp_servers = app.config.get('SENDER_SMTP_SERVERS', SENDER_SMTP_SERVERS)
+        if not active_smtp_servers:
+            flash('SMTP servers are not configured. Cannot send emails.', 'danger')
+            return redirect(url_for('manage_campaigns'))
 
+        if campaign.status == "Sending":
+            flash(f'Campaign "{campaign.name}" is already being sent.', 'warning')
+            return redirect(url_for('manage_campaigns'))
 
-        new_campaign = Campaign(
-            name=name,
-            subject=subject,
-            html_body=html_body,
-            text_body=text_body,
-            recipients=recipients_str, # Store as string, parse when sending
-            attachments_json=json.dumps(uploaded_files_info) if uploaded_files_info else None,
-            link_url=link_url,
-            user_id=current_user.id,
-            status="Pending"
-        )
-        db.session.add(new_campaign)
+        recipients_list = [email.strip() for email in campaign.recipients.split(',') if email.strip()]
+        if not recipients_list:
+            flash('No recipients specified for this campaign.', 'danger')
+            campaign.status = "Failed"; db.session.commit()
+            return redirect(url_for('manage_campaigns'))
+
+        attachments = json.loads(campaign.attachments_json) if campaign.attachments_json else []
+        campaign.status = "Sending"
+        campaign.total_sent = len(recipients_list)
+        campaign.total_success = 0; campaign.total_failed = 0
         db.session.commit()
-        flash(f'Campaign "{name}" created successfully!', 'success')
-        return redirect(url_for('manage_campaigns'))
 
-    campaigns = Campaign.query.filter_by(user_id=current_user.id).order_by(Campaign.created_at.desc()).all()
-    return render_template('campaigns.html', campaigns=campaigns,
-                            smtp_configured=bool(SMTP_SERVERS), # Pass SMTP config status to template
-                            from_names=FROM_NAMES, from_emails=FROM_EMAILS, subjects=SUBJECTS)
+        campaign_sending_status[campaign.id] = {
+            "name": campaign.name, "total": len(recipients_list), "sent_count": 0,
+            "success_count": 0, "failed_count": 0, "status": "Initializing..."}
 
+        # Pass the current app instance to the thread context
+        thread_app = app._get_current_object() # Get current app proxy's underlying object
 
-@app.route('/campaign/<int:campaign_id>/send', methods=['POST'])
-@login_required
-def send_campaign(campaign_id: int):
-    """Initiates the sending process for a specific campaign in a background thread."""
-    campaign = Campaign.query.get_or_404(campaign_id)
-    if campaign.user_id != current_user.id and not current_user.is_admin:
-        flash('You do not have permission to send this campaign.', 'danger')
-        return redirect(url_for('manage_campaigns'))
+        thread = threading.Thread(target=execute_sending_logic, args=(
+            thread_app, campaign.id, recipients_list, campaign.subject, campaign.html_body,
+            campaign.text_body, attachments, str(campaign.id), campaign.link_url
+        ))
+        thread.daemon = True
+        thread.start()
+        flash(f'Campaign "{campaign.name}" sending process initiated.', 'info')
+        return redirect(url_for('dashboard'))
 
-    if not SMTP_SERVERS:
-        flash('SMTP servers are not configured. Cannot send emails.', 'danger')
-        return redirect(url_for('manage_campaigns'))
+    @app.route('/campaign/<int:campaign_id>/status')
+    @login_required
+    def campaign_status_route(campaign_id: int): # Renamed to avoid conflict if 'campaign_status' is used as var
+        campaign = Campaign.query.get_or_404(campaign_id)
+        if campaign.user_id != current_user.id and not current_user.is_admin:
+            return jsonify({"error": "Unauthorized"}), 403
 
-    if campaign.status == "Sending":
-        flash(f'Campaign "{campaign.name}" is already being sent.', 'warning')
-        return redirect(url_for('manage_campaigns'))
+        status_info_mem = campaign_sending_status.get(campaign.id)
+        if not status_info_mem or campaign.status != "Sending":
+            status_info = {"name": campaign.name, "total": campaign.total_sent or 0,
+                           "sent_count": campaign.total_sent or 0,
+                           "success_count": campaign.total_success or 0,
+                           "failed_count": campaign.total_failed or 0,
+                           "status": campaign.status, "source": "database"}
+        else:
+            status_info = status_info_mem
+            status_info["source"] = "memory"
+        return jsonify(status_info)
 
-    recipients_list = [email.strip() for email in campaign.recipients.split(',') if email.strip()]
-    if not recipients_list:
-        flash('No recipients specified for this campaign.', 'danger')
-        campaign.status = "Failed"
+    @app.route('/track/open', methods=['GET'])
+    def track_open():
+        email = request.args.get('email')
+        campaign_id_str = request.args.get('campaign_id', 'default')
+        campaign_obj = None
+        if campaign_id_str.isdigit():
+            campaign_obj = Campaign.query.get(int(campaign_id_str))
+
+        new_open = EmailTrack(recipient_email=email, campaign_id=campaign_obj.id if campaign_obj else None,
+                              ip_address=request.remote_addr, user_agent=request.user_agent.string)
+        db.session.add(new_open)
         db.session.commit()
-        return redirect(url_for('manage_campaigns'))
 
-    attachments = json.loads(campaign.attachments_json) if campaign.attachments_json else []
+        pixel_gif_b64 = "R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw=="
+        pixel_data = base64.b64decode(pixel_gif_b64)
+        response = make_response(pixel_data)
+        response.headers['Content-Type'] = 'image/gif'
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'; response.headers['Expires'] = '0'
+        return response
 
-    # Update campaign status before starting thread
-    campaign.status = "Sending"
-    campaign.total_sent = len(recipients_list) # Tentative, will be updated by sender
-    campaign.total_success = 0
-    campaign.total_failed = 0
-    db.session.commit()
+    @app.route('/admin', methods=['GET'])
+    @login_required
+    def admin_dashboard():
+        if not current_user.is_admin:
+            flash('You do not have permission to access this page.', 'danger')
+            return redirect(url_for('dashboard'))
+        users = User.query.all()
+        all_campaigns = Campaign.query.order_by(Campaign.created_at.desc()).all()
+        # TRACKING_DOMAIN will now come from app.config
+        current_tracking_domain = app.config.get('SENDER_TRACKING_DOMAIN', SENDER_TRACKING_DOMAIN)
+        return render_template('admin_dashboard.html', users=users, campaigns=all_campaigns, TRACKING_DOMAIN=current_tracking_domain)
 
-    # Use global campaign_sending_status for quick UI updates
-    campaign_sending_status[campaign.id] = {
-        "name": campaign.name,
-        "total": len(recipients_list),
-        "sent_count": 0,
-        "success_count": 0,
-        "failed_count": 0,
-        "status": "Initializing..."
-    }
+    @app.route('/admin/user/<int:user_id>/toggle_admin', methods=['POST'])
+    @login_required
+    def toggle_admin_status(user_id: int):
+        if not current_user.is_admin:
+            flash('Unauthorized.', 'danger'); return redirect(url_for('admin_dashboard'))
+        user_to_modify = User.query.get_or_404(user_id)
+        if user_to_modify.id == current_user.id and User.query.filter_by(is_admin=True).count() == 1:
+            flash('Cannot remove admin status from the only admin user.', 'warning')
+        else:
+            user_to_modify.is_admin = not user_to_modify.is_admin
+            db.session.commit()
+            flash(f"User {user_to_modify.username}'s admin status updated.", 'success')
+        return redirect(url_for('admin_dashboard'))
 
-    # Run bulk_send_emails in a separate thread to avoid blocking the UI
-    # Pass necessary database and app context if sender needs to update DB directly
-    # For now, sender returns results, and we update DB here or via a status check endpoint
-    thread = threading.Thread(target=execute_sending_logic, args=(
-        app, # Pass the app instance
-        campaign.id,
-        recipients_list,
-        campaign.subject,
-        campaign.html_body,
-        campaign.text_body,
-        attachments,
-        str(campaign.id), # campaign_id for tracking
-        campaign.link_url
-        # Add num_threads, min_delay, max_delay from config or form
-    ))
-    thread.daemon = True # Allows main app to exit even if threads are running
-    thread.start()
+    # --- Utility function for DB initialization ---
+    # This needs to be callable after app is created, so it's defined here
+    # but typically called from the main script block or a separate CLI command.
+    def init_db_command():
+        """Initializes the database and creates a default admin user."""
+        with app.app_context(): # app context is crucial here
+            db.create_all()
+            if User.query.filter_by(username='admin').first() is None:
+                admin_user = User(username='admin', is_admin=True)
+                admin_user.set_password(app.config.get('DEFAULT_ADMIN_PASSWORD', 'admin'))
+                db.session.add(admin_user)
+                db.session.commit()
+                print(f"Default admin user 'admin' with default password created.")
+            print("Database tables created/verified.")
 
-    flash(f'Campaign "{campaign.name}" sending process initiated.', 'info')
-    return redirect(url_for('dashboard')) # Or back to campaigns page
+    # Register as a CLI command if desired, or call directly
+    @app.cli.command("init-db")
+    def init_db_cli():
+        """CLI command to initialize the database."""
+        init_db_command()
+        print("Database initialized via CLI.")
 
-def execute_sending_logic(flask_app, db_campaign_id, recipients, subject, html_body, text_body, attachments, tracking_campaign_id, link_url):
+    return app
+
+# --- Email Sending Logic (Thread Worker) ---
+def execute_sending_logic(flask_app_instance, db_campaign_id, recipients, subject, html_body,
+                          text_body, attachments, tracking_campaign_id, link_url):
     """
     Wrapper function to run email sending logic in a separate thread.
-    This function is called by `send_campaign` to offload the blocking
-    `bulk_send_emails` call. It requires the Flask app context to perform
-    database operations after sending is complete.
+    Requires the Flask app context for DB operations.
     """
-    with flask_app.app_context(): # Establish app context for DB operations in thread
+    with flask_app_instance.app_context(): # Use the passed app instance for context
         current_time = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
         print(f"[{current_time}] Thread started for campaign ID {db_campaign_id} ({len(recipients)} recipients).")
 
-        # Update global in-memory status
         if db_campaign_id in campaign_sending_status:
             campaign_sending_status[db_campaign_id]["status"] = "Sending in progress..."
 
+        # Get email sending params from app config (passed from create_app)
+        num_threads = flask_app_instance.config.get('EMAIL_NUM_THREADS', 5)
+        min_delay = flask_app_instance.config.get('EMAIL_MIN_DELAY', 1.0)
+        max_delay = flask_app_instance.config.get('EMAIL_MAX_DELAY', 3.0)
+
+        # Update sender.py's global config if necessary, or pass them directly
+        # For now, assuming sender.py will use its own globals or they are updated elsewhere
+        # A better way would be to pass SENDER_SMTP_SERVERS etc. to bulk_send_emails if possible
+        # Or, sender.py could have a configure() function called from create_app
+
+        # Ensure sender.py uses the app's configured SMTP servers, not its own hardcoded ones
+        # This is a bit of a hack; ideally sender.py's functions would take these as args
+        global SENDER_SMTP_SERVERS, SENDER_FROM_NAMES, SENDER_FROM_EMAILS, SENDER_SUBJECTS, SENDER_TRACKING_DOMAIN
+        SENDER_SMTP_SERVERS = flask_app_instance.config.get('SENDER_SMTP_SERVERS', SENDER_SMTP_SERVERS)
+        SENDER_FROM_NAMES = flask_app_instance.config.get('SENDER_FROM_NAMES', SENDER_FROM_NAMES)
+        SENDER_FROM_EMAILS = flask_app_instance.config.get('SENDER_FROM_EMAILS', SENDER_FROM_EMAILS)
+        SENDER_SUBJECTS = flask_app_instance.config.get('SENDER_SUBJECTS', SENDER_SUBJECTS)
+        SENDER_TRACKING_DOMAIN = flask_app_instance.config.get('SENDER_TRACKING_DOMAIN', SENDER_TRACKING_DOMAIN)
+
+
         results = bulk_send_emails(
-            recipients=recipients,
-            subject_template=subject,
-            body_template_html=html_body,
-            body_template_text=text_body,
-            attachments=attachments,
-            campaign_id=tracking_campaign_id, # This is the string campaign_id for sender.py
-            link_url=link_url,
-            num_threads=app.config.get('EMAIL_NUM_THREADS', 5), # Get from app config or default
-            min_delay=app.config.get('EMAIL_MIN_DELAY', 1),
-            max_delay=app.config.get('EMAIL_MAX_DELAY', 5)
+            recipients=recipients, subject_template=subject, body_template_html=html_body,
+            body_template_text=text_body, attachments=attachments, campaign_id=tracking_campaign_id,
+            link_url=link_url, num_threads=num_threads, min_delay=min_delay, max_delay=max_delay
         )
 
         campaign = Campaign.query.get(db_campaign_id)
         if campaign:
-            campaign.total_sent = len(recipients) # Actual number attempted
+            campaign.total_sent = len(recipients)
             campaign.total_success = results.get("success", 0)
             campaign.total_failed = results.get("failed", 0)
-            campaign.status = "Sent" if results.get("success",0) > 0 else "Failed"
-            if results.get("failed", 0) > 0 and results.get("success", 0) == 0:
-                campaign.status = "Completed with Errors"
+            if results.get("failed", 0) > 0 and results.get("success", 0) == 0 and len(recipients) > 0 :
+                 campaign.status = "Failed"
+            elif results.get("success",0) > 0 :
+                 campaign.status = "Sent"
+            else: # No successes, no failures, possibly no recipients or other issue
+                 campaign.status = "Completed with Issues"
 
             db.session.commit()
-            print(f"Campaign {db_campaign_id} processing finished. Success: {campaign.total_success}, Failed: {campaign.total_failed}")
+            print(f"Campaign {db_campaign_id} processing finished. Status: {campaign.status}, Success: {campaign.total_success}, Failed: {campaign.total_failed}")
         else:
             print(f"Error: Campaign {db_campaign_id} not found after sending.")
 
-        # Update or clear global status
         if db_campaign_id in campaign_sending_status:
             campaign_sending_status[db_campaign_id]["status"] = f"Completed. Success: {results.get('success',0)}, Failed: {results.get('failed',0)}"
             campaign_sending_status[db_campaign_id]["success_count"] = results.get('success',0)
             campaign_sending_status[db_campaign_id]["failed_count"] = results.get('failed',0)
-            # Consider removing from campaign_sending_status after a while or if status is terminal
 
 
-@app.route('/campaign/<int:campaign_id>/status')
-@login_required
-def campaign_status(campaign_id: int):
-    """
-    API endpoint polled by the frontend to get live status updates for a sending campaign.
-    Returns JSON data from the in-memory `campaign_sending_status` or DB if not actively sending.
-    """
-    campaign = Campaign.query.get_or_404(campaign_id)
-    if campaign.user_id != current_user.id and not current_user.is_admin:
-        return jsonify({"error": "Unauthorized"}), 403
+# --- Configuration Loading ---
+def get_config():
+    """Load configuration based on environment."""
+    env = os.environ.get('FLASK_ENV', 'development')
+    # Default values from sender.py can be used if not overridden by env vars
+    config = {
+        'ENV': env,
+        'SECRET_KEY': os.environ.get('SECRET_KEY', 'dev_secret_key_!@#$%^&*()_BULK_EMAILER'),
+        'DEBUG': env != 'production',
+        'SQLALCHEMY_DATABASE_URI': os.environ.get('DATABASE_URL', 'sqlite:///bulk_emailer.db'),
+        'SQLALCHEMY_TRACK_MODIFICATIONS': False,
+        'UPLOAD_FOLDER': os.environ.get('UPLOAD_FOLDER', 'uploads'),
+        'DEFAULT_ADMIN_PASSWORD': os.environ.get('DEFAULT_ADMIN_PASSWORD', 'admin'),
 
-    # Prioritize in-memory status for active campaigns
-    status_info = campaign_sending_status.get(campaign.id)
+        # Email sending configuration (can be overridden by environment variables)
+        'EMAIL_NUM_THREADS': int(os.environ.get('EMAIL_NUM_THREADS', '5')),
+        'EMAIL_MIN_DELAY': float(os.environ.get('EMAIL_MIN_DELAY', '1.0')),
+        'EMAIL_MAX_DELAY': float(os.environ.get('EMAIL_MAX_DELAY', '3.0')),
 
-    if not status_info or campaign.status != "Sending":
-        # If not actively sending or not in memory, fetch from DB as fallback
-        status_info = {
-            "name": campaign.name,
-            "total": campaign.total_sent or 0,
-            "sent_count": campaign.total_sent or 0, # This implies all attempted are 'sent' in a way
-            "success_count": campaign.total_success or 0,
-            "failed_count": campaign.total_failed or 0,
-            "status": campaign.status,
-            "source": "database"
-        }
-    else:
-        status_info["source"] = "memory"
-
-    return jsonify(status_info)
-
-# --- Tracking Route ---
-@app.route('/track/open', methods=['GET'])
-def track_open():
-    """
-    Tracking pixel endpoint. Logs an email open event when the 1x1 pixel image
-    is requested by an email client.
-    """
-    email = request.args.get('email')
-    campaign_id_str = request.args.get('campaign_id', 'default') # From sender.py tracking pixel
-
-    # Try to find the campaign by its ID (which was stringified from integer)
-    campaign = None
-    if campaign_id_str.isdigit():
-        campaign = Campaign.query.get(int(campaign_id_str))
-
-    # Log the open
-    new_open = EmailTrack(
-        recipient_email=email,
-        campaign_id=campaign.id if campaign else None,
-        ip_address=request.remote_addr,
-        user_agent=request.user_agent.string
-    )
-    db.session.add(new_open)
-    db.session.commit()
-
-    # Return a 1x1 transparent pixel
-    # (Content of pixel can be pre-generated and served as static file for efficiency)
-    from flask import make_response
-    import base64
-    pixel_gif_b64 = "R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" # 1x1 transparent GIF
-    pixel_data = base64.b64decode(pixel_gif_b64)
-    response = make_response(pixel_data)
-    response.headers['Content-Type'] = 'image/gif'
-    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    response.headers['Pragma'] = 'no-cache'
-    response.headers['Expires'] = '0'
-    return response
-
-# --- Admin Routes ---
-@app.route('/admin', methods=['GET'])
-@login_required
-def admin_dashboard():
-    """Displays the admin dashboard for user management and viewing all campaigns."""
-    if not current_user.is_admin:
-        flash('You do not have permission to access this page.', 'danger')
-        return redirect(url_for('dashboard'))
-
-    users = User.query.all()
-    all_campaigns = Campaign.query.order_by(Campaign.created_at.desc()).all()
-    # Further admin-specific stats can be added here
-    return render_template('admin_dashboard.html', users=users, campaigns=all_campaigns)
-
-
-@app.route('/admin/user/<int:user_id>/toggle_admin', methods=['POST'])
-@login_required
-def toggle_admin_status(user_id: int):
-    """Toggles the admin status of a user. Requires admin privileges."""
-    if not current_user.is_admin:
-        flash('Unauthorized.', 'danger')
-        return redirect(url_for('admin_dashboard'))
-
-    user_to_modify = User.query.get_or_404(user_id)
-    if user_to_modify.id == current_user.id and User.query.filter_by(is_admin=True).count() == 1:
-        flash('Cannot remove admin status from the only admin user.', 'warning')
-        return redirect(url_for('admin_dashboard'))
-
-    user_to_modify.is_admin = not user_to_modify.is_admin
-    db.session.commit()
-    flash(f"User {user_to_modify.username}'s admin status updated.", 'success')
-    return redirect(url_for('admin_dashboard'))
-
-
-# --- Utility and Initialization Functions ---
-def init_db():
-    """
-    Initializes the database: creates all tables based on models
-    and creates a default admin user if one does not already exist.
-    This function should be called once when setting up the application.
-    """
-    with app.app_context():
-        db.create_all()
-        if User.query.filter_by(username='admin').first() is None:
-            admin_user = User(username='admin', is_admin=True)
-            admin_user.set_password('admin') # Default password, should be changed by the user.
-            db.session.add(admin_user)
-            db.session.commit()
-            print("Default admin user 'admin' with password 'admin' created.")
-        print("Database tables created/verified.")
+        # SMTP and sender related configurations
+        # These will override sender.py's globals if set, otherwise sender.py's defaults are used.
+        # For a cleaner approach, sender.py functions should accept these as parameters.
+        'SENDER_SMTP_SERVERS': json.loads(os.environ.get('SENDER_SMTP_SERVERS_JSON', '[]')) or SENDER_SMTP_SERVERS,
+        'SENDER_FROM_NAMES': json.loads(os.environ.get('SENDER_FROM_NAMES_JSON', '[]')) or SENDER_FROM_NAMES,
+        'SENDER_FROM_EMAILS': json.loads(os.environ.get('SENDER_FROM_EMAILS_JSON', '[]')) or SENDER_FROM_EMAILS,
+        'SENDER_SUBJECTS': json.loads(os.environ.get('SENDER_SUBJECTS_JSON', '[]')) or SENDER_SUBJECTS,
+        'SENDER_TRACKING_DOMAIN': os.environ.get('SENDER_TRACKING_DOMAIN', SENDER_TRACKING_DOMAIN),
+    }
+    return config
 
 # --- Main Execution ---
 if __name__ == '__main__':
-    # Initialize database (creates tables and default admin if necessary)
-    init_db()
+    app_config = get_config()
+    app = create_app(app_config)
 
-    # Configure application settings for email sending (can be moved to instance config)
-    app.config['EMAIL_NUM_THREADS'] = 5     # Number of threads for sending emails
-    app.config['EMAIL_MIN_DELAY'] = 1.0   # Minimum delay (seconds) between sends per thread
-    app.config['EMAIL_MAX_DELAY'] = 3.0   # Maximum delay (seconds) between sends per thread
+    # Initialize DB through app context if not using CLI command 'flask init-db'
+    # This ensures it runs when 'python app.py' is executed directly.
+    with app.app_context():
+        # Check if DB needs initialization (e.g. if file doesn't exist for sqlite)
+        # A more robust check might be to see if tables exist.
+        db_path_str = app.config['SQLALCHEMY_DATABASE_URI'].replace('sqlite:///', '')
+        if app.config['SQLALCHEMY_DATABASE_URI'].startswith('sqlite:///') and not os.path.exists(db_path_str):
+            print(f"SQLite database not found at {db_path_str}. Initializing...")
+            db.create_all() # Create tables if they don't exist
+            if User.query.filter_by(username='admin').first() is None:
+                admin_user = User(username='admin', is_admin=True)
+                admin_user.set_password(app.config.get('DEFAULT_ADMIN_PASSWORD', 'admin'))
+                db.session.add(admin_user)
+                db.session.commit()
+                print(f"Default admin user 'admin' created.")
+            print("Database initialized.")
+        else:
+             # Ensure tables exist even if DB file exists
+            db.create_all()
+            print("Database tables verified.")
 
-    # Ensure TRACKING_DOMAIN in sender.py matches the app's accessible URL for tracking to work.
-    print(f"INFO: Email open tracking pixel URL is configured with TRACKING_DOMAIN: {TRACKING_DOMAIN}")
-    print(f"INFO: Ensure this application is accessible at that domain for tracking to function.")
-    print(f"INFO: Starting Flask development server on http://0.0.0.0:5000/")
 
-    app.run(debug=True, host='0.0.0.0', port=5000) # debug=True is for development only.
+    port = int(os.environ.get('PORT', 5000))
+    print(f"Starting Bulk Email System on http://0.0.0.0:{port}")
+    print(f"Environment: {app.config['ENV']}")
+    print(f"Debug mode: {'Enabled' if app.config['DEBUG'] else 'Disabled'}")
+
+    # The `SENDER_...` configurations loaded in `get_config()` will be available in `app.config`.
+    # The `execute_sending_logic` function has been updated to use these from `flask_app_instance.config`.
+    # However, for `sender.py` to pick these up if its functions are called directly
+    # or if it relies on its own globals, those globals in sender.py need to be updated.
+    # The current `execute_sending_logic` attempts to update sender.py's globals, which is a workaround.
+
+    app.run(host='0.0.0.0', port=port, debug=app.config['DEBUG'])

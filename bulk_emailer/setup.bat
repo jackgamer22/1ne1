@@ -56,18 +56,18 @@ if %errorlevel% neq 0 (
 )
 echo Requirements installed successfully.
 
-REM Initialize the database
-echo Initializing the database...
-python -c "from app import init_db; print('Attempting to initialize DB...'); init_db(); print('DB initialization process complete.')"
+REM Initialize the database using Flask CLI command
+echo Initializing the database via Flask CLI (flask init-db)...
+flask init-db
 if %errorlevel% neq 0 (
-    echo Failed to initialize the database. Check app.py and database configuration.
+    echo Failed to initialize the database using 'flask init-db'.
+    echo Ensure Flask is installed correctly and app.py is configured for the command.
     pause
-    REM Deactivating venv before exit on error might be good, but script exits anyway
     exit /b 1
 )
-echo Database initialized.
+echo Database initialization command executed.
 
-REM Deactivate virtual environment (optional, as script ends here)
+REM Deactivate virtual environment (optional, as script ends here, but good practice if more commands followed)
 REM call "%VENV_NAME%\Scripts\deactivate.bat"
 
 echo.
