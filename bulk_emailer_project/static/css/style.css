@@ -1,0 +1,116 @@
+body {
+    padding-top: 56px; /* Adjust based on navbar height */
+    padding-bottom: 60px; /* Adjust based on footer height */
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+.container {
+    flex: 1;
+}
+
+.footer {
+    background-color: #f8f9fa; /* Bootstrap default light grey */
+    position: fixed;
+    bottom: 0;
+    width: 100%;
+    line-height: 60px; /* Vertically center the text there */
+}
+
+
+/* Card styles for dashboard */
+.card {
+    margin-bottom: 1.5rem;
+}
+
+.border-left-primary {
+    border-left: .25rem solid #4e73df!important;
+}
+.text-primary {
+    color: #4e73df!important;
+}
+
+.border-left-success {
+    border-left: .25rem solid #1cc88a!important;
+}
+.text-success {
+    color: #1cc88a!important;
+}
+
+.border-left-info {
+    border-left: .25rem solid #36b9cc!important;
+}
+.text-info {
+    color: #36b9cc!important;
+}
+
+.border-left-warning {
+    border-left: .25rem solid #f6c23e!important;
+}
+.text-warning {
+    color: #f6c23e!important;
+}
+.border-left-danger {
+    border-left: .25rem solid #e74a3b!important;
+}
+.text-danger {
+    color: #e74a3b!important;
+}
+
+
+.text-xs {
+    font-size: .7rem;
+}
+.font-weight-bold {
+    font-weight: 700!important;
+}
+.text-gray-300 {
+    color: #dddfeb!important;
+}
+.text-gray-800 {
+    color: #5a5c69!important;
+}
+.shadow {
+    box-shadow: 0 .15rem 1.75rem 0 rgba(58,59,69,.15)!important;
+}
+.h-100 {
+    height: 100%!important;
+}
+.py-2 {
+    padding-top: .5rem!important;
+    padding-bottom: .5rem!important;
+}
+
+/* Ensure Chart.js charts are responsive */
+.chart-container {
+    position: relative;
+    margin: auto;
+    height: 30vh; /* Example height */
+    width: 80vw;  /* Example width */
+    max-width: 600px;
+}
+
+/* Fix navbar covering content */
+body {
+  padding-top: 70px; /* Height of your navbar */
+}
+
+/* Sticky footer */
+html {
+  position: relative;
+  min-height: 100%;
+}
+body {
+  /* Margin bottom by footer height */
+  margin-bottom: 60px;
+}
+.footer {
+  position: absolute;
+  bottom: 0;
+  width: 100%;
+  /* Set the fixed height of the footer here */
+  height: 60px;
+  line-height: 60px; /* Vertically center the text there */
+  background-color: #f5f5f5;
+}

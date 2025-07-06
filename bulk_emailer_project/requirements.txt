@@ -1,0 +1,11 @@
+Flask
+Flask-Login
+Flask-SQLAlchemy
+SQLAlchemy
+requests
+secure-smtplib
+beautifulsoup4
+Faker
+Werkzeug
+Chart.js
+# Add other specific dependencies as they become clear during development, e.g., for PDF generation if not using a library that Flask or requests can handle indirectly.

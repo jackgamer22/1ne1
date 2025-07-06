@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Bulk Emailer{% endblock %}
+
+{% block head_extra %}
+<style>
+    .stat-card {
+        margin-bottom: 20px;
+    }
+    .chart-container {
+        position: relative;
+        height: 300px; /* Adjust as needed */
+        width: 100%;
+         max-width: 500px; /* Max width for pie chart */
+        margin: auto; /* Center the chart */
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-sm-flex align-items-center justify-content-between mb-4">
+    <h1 class="h3 mb-0 text-gray-800">Dashboard</h1>
+    <a href="{{ url_for('new_campaign') }}" class="btn btn-primary btn-sm shadow-sm">
+        <i class="fas fa-plus fa-sm text-white-50"></i> Create New Campaign
+    </a>
+</div>
+
+<!-- Stats Overview -->
+<div class="row">
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card border-left-primary shadow h-100 py-2 stat-card">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Total Emails Processed</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">{{ stats.total_sent }}</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="fas fa-paper-plane fa-2x text-gray-300"></i> <!-- Placeholder icon -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card border-left-success shadow h-100 py-2 stat-card">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-success text-uppercase mb-1">Successfully Sent</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">{{ stats.success_count }}</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="fas fa-check-circle fa-2x text-gray-300"></i> <!-- Placeholder icon -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card border-left-danger shadow h-100 py-2 stat-card">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-danger text-uppercase mb-1">Failed to Send</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">{{ stats.failed_count }}</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="fas fa-times-circle fa-2x text-gray-300"></i> <!-- Placeholder icon -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card border-left-info shadow h-100 py-2 stat-card">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-info text-uppercase mb-1">Emails Opened</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">{{ stats.opened_count }}</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="fas fa-eye fa-2x text-gray-300"></i> <!-- Placeholder icon -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Chart Section -->
+<div class="row">
+    <div class="col-lg-6 mb-4">
+        <div class="card shadow">
+            <div class="card-header py-3">
+                <h6 class="m-0 font-weight-bold text-primary">Email Status Overview</h6>
+            </div>
+            <div class="card-body">
+                <div class="chart-container">
+                    <canvas id="emailStatusPieChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6 mb-4">
+        <!-- Placeholder for another chart or information -->
+        <div class="card shadow">
+            <div class="card-header py-3">
+                <h6 class="m-0 font-weight-bold text-primary">Open Rate (Example)</h6>
+            </div>
+            <div class="card-body">
+                <p>Open rate calculation will be added here.</p>
+                {% if stats.success_count > 0 %}
+                    <p>Current Open Rate: <strong>{{ "%.2f"|format((stats.opened_count / stats.success_count) * 100 if stats.success_count > 0 else 0) }}%</strong></p>
+                {% else %}
+                    <p>No emails sent successfully yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<!-- Campaigns List -->
+<div class="card shadow mb-4">
+    <div class="card-header py-3">
+        <h6 class="m-0 font-weight-bold text-primary">My Campaigns</h6>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-bordered" id="campaignsTable" width="100%" cellspacing="0">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Status</th>
+                        <th>Created At</th>
+                        <th>Total Recipients</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for campaign in campaigns %}
+                    <tr>
+                        <td>{{ campaign.name }}</td>
+                        <td>
+                            <span class="badge badge-{% if campaign.status == 'Completed' %}success{% elif campaign.status == 'Running' %}info{% elif campaign.status == 'Pending' %}warning{% else %}danger{% endif %}">
+                                {{ campaign.status }}
+                            </span>
+                        </td>
+                        <td>{{ campaign.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                        <td>{{ campaign.get_recipient_list()|length }}</td>
+                        <td>
+                            <a href="{{ url_for('view_campaign', campaign_id=campaign.id) }}" class="btn btn-info btn-sm">View</a>
+                            {% if campaign.status != 'Running' %}
+                            <form method="POST" action="{{ url_for('start_campaign', campaign_id=campaign.id) }}" style="display:inline;">
+                                <button type="submit" class="btn btn-success btn-sm">Start</button>
+                            </form>
+                            {% endif %}
+                            <!-- Add Edit/Delete later if needed -->
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" class="text-center">No campaigns found. <a href="{{ url_for('new_campaign') }}">Create one now!</a></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    // Email Status Pie Chart
+    const ctxPie = document.getElementById('emailStatusPieChart');
+    if (ctxPie) {
+        new Chart(ctxPie, {
+            type: 'pie',
+            data: {
+                labels: ['Successful', 'Failed', 'Not Yet Sent/Processing'],
+                datasets: [{
+                    label: 'Email Status',
+                    data: [
+                        {{ stats.success_count or 0 }},
+                        {{ stats.failed_count or 0 }},
+                        {{ (stats.total_sent or 0) - (stats.success_count or 0) - (stats.failed_count or 0) }} // This is a simplification
+                    ],
+                    backgroundColor: [
+                        'rgba(75, 192, 192, 0.7)', // Success - Green
+                        'rgba(255, 99, 132, 0.7)',  // Failed - Red
+                        'rgba(201, 203, 207, 0.7)'  // Not Sent/Processing - Grey
+                    ],
+                    borderColor: [
+                        'rgba(75, 192, 192, 1)',
+                        'rgba(255, 99, 132, 1)',
+                        'rgba(201, 203, 207, 1)'
+                    ],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'top',
+                    },
+                    title: {
+                        display: false,
+                        text: 'Email Sending Status'
+                    }
+                }
+            }
+        });
+    }
+    // Add other charts here if needed
+});
+</script>
+{% endblock %}

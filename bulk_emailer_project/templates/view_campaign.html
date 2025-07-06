@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+
+{% block title %}View Campaign: {{ campaign.name }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2>Campaign: {{ campaign.name }}</h2>
+    <div>
+        {% if campaign.status != 'Running' %}
+        <form method="POST" action="{{ url_for('start_campaign', campaign_id=campaign.id) }}" style="display:inline;">
+            <button type="submit" class="btn btn-success">
+                <i class="fas fa-play"></i> Start Campaign
+            </button>
+        </form>
+        {% else %}
+        <button class="btn btn-info disabled"><i class="fas fa-spinner fa-spin"></i> Running...</button>
+        {% endif %}
+        <!-- Add Edit button later if needed and campaign is not running -->
+        <!-- <a href="{{ url_for('edit_campaign', campaign_id=campaign.id) }}" class="btn btn-warning">Edit</a> -->
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">
+        Campaign Details
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-6">
+                <p><strong>Status:</strong> <span class="badge badge-{% if campaign.status == 'Completed' %}success{% elif campaign.status == 'Running' %}info{% elif campaign.status == 'Pending' %}warning{% else %}danger{% endif %}">{{ campaign.status }}</span></p>
+                <p><strong>Created By:</strong> {{ campaign.owner.username }}</p>
+                <p><strong>Created At:</strong> {{ campaign.created_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</p>
+                <p><strong>Open Tracking:</strong> {{ 'Enabled' if campaign.track_opens else 'Disabled' }}</p>
+            </div>
+            <div class="col-md-6">
+                <p><strong>Total Recipients:</strong> {{ campaign.get_recipient_list()|length }}</p>
+                <p><strong>Subjects:</strong> {{ campaign.get_subject_list()|join(', ') }}</p>
+                <p><strong>From Names:</strong> {{ campaign.get_from_name_list()|join(', ') }}</p>
+                <p><strong>From Emails:</strong> {{ campaign.get_from_email_list()|join(', ') }}</p>
+                 <p><strong>Delays:</strong> {{ campaign.min_delay }}s - {{ campaign.max_delay }}s</p>
+                <p><strong>Threads:</strong> {{ campaign.num_threads }}</p>
+            </div>
+        </div>
+        <hr>
+        <h5>HTML Template Preview:</h5>
+        <div style="border: 1px solid #eee; padding: 10px; max-height: 300px; overflow-y: auto;">
+            <code>{{ campaign.html_template|safe }}</code>
+        </div>
+        {% if campaign.text_template %}
+        <hr>
+        <h5>Text Template Preview:</h5>
+        <pre style="border: 1px solid #eee; padding: 10px; max-height: 200px; overflow-y: auto;">{{ campaign.text_template }}</pre>
+        {% endif %}
+        {% if campaign.get_attachments() %}
+        <hr>
+        <h5>Attachments:</h5>
+        <ul>
+            {% for attachment_path in campaign.get_attachments() %}
+                <li>{{ attachment_path.split('/')[-1] if '/' in attachment_path else attachment_path.split('\\')[-1] }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">
+        Sent Email Log & Stats for this Campaign
+    </div>
+    <div class="card-body">
+        <p><em>Note: Detailed per-email logging from the sender to the database is required for this section to be fully populated. Current stats are campaign-wide estimates.</em></p>
+
+        {% set c_total = campaign.sent_emails.count() %}
+        {% set c_success = campaign.sent_emails.filter_by(status='Success').count() %}
+        {% set c_failed = campaign.sent_emails.filter_by(status='Fail').count() %}
+        {% set c_opened = campaign.sent_emails.filter(SentEmail.opened_at.isnot(None)).count() %}
+
+        <div class="row mb-3">
+            <div class="col-md-3"><strong>Processed:</strong> {{ c_total }}</div>
+            <div class="col-md-3"><strong>Successful:</strong> {{ c_success }}</div>
+            <div class="col-md-3"><strong>Failed:</strong> {{ c_failed }}</div>
+            <div class="col-md-3"><strong>Opened:</strong> {{ c_opened }}</div>
+        </div>
+
+        {% if c_success > 0 %}
+        <p><strong>Open Rate (for this campaign):</strong> {{ "%.2f"|format((c_opened / c_success) * 100) }}%</p>
+        {% endif %}
+
+        <div class="table-responsive">
+            <table class="table table-sm table-striped">
+                <thead>
+                    <tr>
+                        <th>Recipient</th>
+                        <th>Sent At</th>
+                        <th>Status</th>
+                        <th>SMTP Used</th>
+                        <th>Opened At</th>
+                        <th>Error</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for email in sent_emails_paginated.items %}
+                    <tr>
+                        <td>{{ email.recipient_email }}</td>
+                        <td>{{ email.sent_at.strftime('%Y-%m-%d %H:%M') if email.sent_at else 'N/A' }}</td>
+                        <td>
+                            <span class="badge badge-{{ 'success' if email.status == 'Success' else 'danger' }}">
+                                {{ email.status }}
+                            </span>
+                        </td>
+                        <td>{{ email.smtp_used if email.smtp_used else '-' }}</td>
+                        <td>{{ email.opened_at.strftime('%Y-%m-%d %H:%M') if email.opened_at else '-' }}</td>
+                        <td class="text-truncate" style="max-width: 150px;" title="{{ email.error_message if email.error_message else '' }}">{{ email.error_message if email.error_message else '-' }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" class="text-center">No emails logged for this campaign yet, or campaign not started.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        {% if sent_emails_paginated.pages > 1 %}
+        <nav aria-label="Email log pagination">
+            <ul class="pagination justify-content-center">
+                {% if sent_emails_paginated.has_prev %}
+                    <li class="page-item"><a class="page-link" href="{{ url_for('view_campaign', campaign_id=campaign.id, page=sent_emails_paginated.prev_num) }}">Previous</a></li>
+                {% else %}
+                    <li class="page-item disabled"><span class="page-link">Previous</span></li>
+                {% endif %}
+
+                {% for page_num in sent_emails_paginated.iter_pages() %}
+                    {% if page_num %}
+                        {% if sent_emails_paginated.page == page_num %}
+                            <li class="page-item active"><span class="page-link">{{ page_num }}</span></li>
+                        {% else %}
+                            <li class="page-item"><a class="page-link" href="{{ url_for('view_campaign', campaign_id=campaign.id, page=page_num) }}">{{ page_num }}</a></li>
+                        {% endif %}
+                    {% else %}
+                        <li class="page-item disabled"><span class="page-link">...</span></li>
+                    {% endif %}
+                {% endfor %}
+
+                {% if sent_emails_paginated.has_next %}
+                    <li class="page-item"><a class="page-link" href="{{ url_for('view_campaign', campaign_id=campaign.id, page=sent_emails_paginated.next_num) }}">Next</a></li>
+                {% else %}
+                    <li class="page-item disabled"><span class="page-link">Next</span></li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+    </div>
+</div>
+
+<a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Back to Dashboard</a>
+
+{% endblock %}
