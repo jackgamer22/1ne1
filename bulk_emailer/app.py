@@ -31,7 +31,8 @@ except ImportError:
 
 
 # --- App Configuration ---
-app = Flask(__name__)
+# Explicitly set template_folder, though 'templates' is the default if app.py is in 'bulk_emailer'
+app = Flask(__name__, template_folder='templates')
 app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'dev_secret_key_!@#$%^&*()_BULK') # Change in production!
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///bulk_emailer.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
