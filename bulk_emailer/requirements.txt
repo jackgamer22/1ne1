@@ -1,9 +1,0 @@
-Flask
-Flask-SQLAlchemy
-Flask-Login
-Flask-WTF
-Werkzeug
-email-validator
-Faker
-requests
-chart.js

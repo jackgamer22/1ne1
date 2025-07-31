@@ -1,0 +1,41 @@
+{
+  "smtp_servers": [
+    {
+      "id": "smtp1",
+      "host": "smtp.example.com",
+      "port": 587,
+      "secure": false,
+      "auth": {
+        "user": "user1@example.com",
+        "pass": "password123"
+      }
+    },
+    {
+      "id": "smtp2",
+      "host": "smtp.another-provider.com",
+      "port": 465,
+      "secure": true,
+      "auth": {
+        "user": "user2@another-provider.com",
+        "pass": "password456"
+      }
+    }
+  ],
+  "from_names": [
+    "Support Team",
+    "Info Desk",
+    "Marketing Department",
+    "Customer Service"
+  ],
+  "from_emails": [
+    "noreply@example.com",
+    "contact@example.com",
+    "support@example.com"
+  ],
+  "subjects": [
+    "Important Update Regarding Your Account",
+    "A Special Offer Just For You!",
+    "Your Weekly Newsletter is Here",
+    "Re: Your Recent Inquiry"
+  ]
+}

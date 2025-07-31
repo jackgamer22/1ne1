@@ -1,0 +1,24 @@
+{
+  "name": "node-email-bot",
+  "version": "1.0.0",
+  "description": "An email marketing agent controlled by a Telegram bot.",
+  "main": "telegramBot.js",
+  "scripts": {
+    "start": "node telegramBot.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "email",
+    "marketing",
+    "nodemailer"
+  ],
+  "author": "Jules",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "node-telegram-bot-api": "^0.61.0",
+    "nodemailer": "^6.9.7",
+    "puppeteer": "^21.5.2"
+  }
+}

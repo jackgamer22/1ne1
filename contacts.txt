@@ -1,0 +1,3 @@
+# Add recipient email addresses here, one per line.
+# example1@example.com
+# user2@domain.com

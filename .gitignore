@@ -1,0 +1,31 @@
+# Node.js
+node_modules/
+npm-debug.log
+yarn-error.log
+pnpm-debug.log
+
+# Environment variables
+.env
+
+# Application specific
+*.log
+*.pdf
+settings.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+pip-selfcheck.json
+.pytest_cache/
+.mypy_cache/
+.tox/
+.nox/
+.eggs/
+dist/
+build/
+*.egg-info/
