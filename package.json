@@ -2,22 +2,15 @@
   "name": "app",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "sender-app/sender.js",
   "scripts": {
+    "start": "node sender-app/sender.js",
     "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/jackgamer22/1ne1.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
-  "bugs": {
-    "url": "https://github.com/jackgamer22/1ne1/issues"
-  },
-  "homepage": "https://github.com/jackgamer22/1ne1#readme",
   "dependencies": {
     "express": "^4.17.1"
   }

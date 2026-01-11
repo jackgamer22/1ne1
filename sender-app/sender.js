@@ -1,4 +1,5 @@
 const express = require('express');
+const path = require('path');
 const app = express();
 const port = 3001; // Using a different port to avoid conflict
 
@@ -6,7 +7,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.get('/', (req, res) => {
-  res.sendFile(__dirname + '/sender.html');
+  res.sendFile(path.join(__dirname, 'sender.html'));
 });
 
 app.post('/send', (req, res) => {
