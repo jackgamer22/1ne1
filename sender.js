@@ -2,6 +2,7 @@
 const figlet = require('figlet');
 const figlet = require('figlet');
 const chalk = require('chalk');
+const pLimit = require('p-limit');
 const logger = require('./logger');
 const config = require('./config');
 const { readCeoCfoPairs, readMessageDrafts } = require('./data');
@@ -26,7 +27,10 @@ async function main() {
         companyMap.get(pair.companyName).push(pair);
     });
 
-    // Iterate through each company
+    const limit = pLimit(config.concurrency || 5);
+    const emailPromises = [];
+
+    // Iterate through each company and create email sending promises
     for (const [companyName, pairs] of companyMap) {
         if (pairs.length >= 2) {
             const ceo = pairs[0];
@@ -35,11 +39,9 @@ async function main() {
             if (ceo && cfo) {
                 const smtpConfig = getNextSmtpConfig(smtpConfigurations);
                 if (smtpConfig) {
-                    await sendEmail(cfo, messageDrafts, config, smtpConfig);
-                    await new Promise(resolve => setTimeout(resolve, emailPause));
+                    emailPromises.push(limit(() => sendEmail(cfo, messageDrafts, config, smtpConfig)));
                 } else {
-                    logger.error('Halting execution: No healthy SMTP servers available.');
-                    break;
+                    logger.warn(`Skipping email to ${cfo.cfoEmail} due to no healthy SMTP servers.`);
                 }
             } else {
                 logger.warn(`Skipping ${companyName} due to missing CEO or CFO.`);
@@ -48,6 +50,10 @@ async function main() {
             logger.warn(`Skipping ${companyName} due to insufficient data.`);
         }
     }
+
+    // Await all promises to complete
+    await Promise.all(emailPromises);
+    logger.info('All emails have been processed.');
 }
 
 main().catch(err => {

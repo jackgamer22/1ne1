@@ -14,9 +14,23 @@ function loadConfig() {
         .argv;
 
     try {
-        return JSON.parse(fs.readFileSync(argv.config, 'utf8'));
+        const config = JSON.parse(fs.readFileSync(argv.config, 'utf8'));
+
+        // Validate config
+        const requiredKeys = [
+            'smtpConfigurations', 'ceoCfoFilePath', 'messageDraftsPath',
+            'signature', 'cloneCeoEmail', 'nameMagxxic', 'minDelay', 'maxDelay', 'emailPause'
+        ];
+
+        for (const key of requiredKeys) {
+            if (!(key in config)) {
+                throw new Error(`Missing required configuration key: ${key}`);
+            }
+        }
+
+        return config;
     } catch (error) {
-        logger.error(`Error loading configuration from ${argv.config}: ${error.message}`);
+        logger.error(`Error loading or validating configuration from ${argv.config}: ${error.message}`);
         process.exit(1);
     }
 }

@@ -26,5 +26,6 @@
     "nameMagxxic": "Name Magxxic",
     "minDelay": 7000,
     "maxDelay": 15000,
-    "emailPause": 2000
+    "emailPause": 2000,
+    "concurrency": 5
 }

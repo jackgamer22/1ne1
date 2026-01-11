@@ -4,6 +4,11 @@ const { parse } = require('csv-parse');
 const logger = require('./logger');
 
 async function readCeoCfoPairs(filePath) {
+    if (!fs.existsSync(filePath)) {
+        logger.error(`CEO/CFO data file not found at: ${filePath}`);
+        process.exit(1);
+    }
+
     const records = [];
     const parser = fs.createReadStream(filePath).pipe(parse({
         columns: true,
@@ -21,6 +26,11 @@ async function readCeoCfoPairs(filePath) {
 }
 
 async function readMessageDrafts(filePath) {
+    if (!fs.existsSync(filePath)) {
+        logger.error(`Message drafts file not found at: ${filePath}`);
+        process.exit(1);
+    }
+
     const messageDrafts = [];
     const fileStream = fs.createReadStream(filePath);
 

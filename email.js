@@ -35,7 +35,14 @@ async function sendEmail(ceoCfo, messageDrafts, config, smtpConfig) {
         const randomDelay = Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
         await new Promise(resolve => setTimeout(resolve, randomDelay));
 
-        const randomMessage = messageDrafts[Math.floor(Math.random() * messageDrafts.length)];
+        const randomMessageTemplate = messageDrafts[Math.floor(Math.random() * messageDrafts.length)];
+
+        // Personalize the message
+        const personalizedMessage = randomMessageTemplate
+            .replace(/{{cfoName}}/g, ceoCfo.cfoName)
+            .replace(/{{ceoName}}/g, ceoCfo.ceoName)
+            .replace(/{{companyName}}/g, ceoCfo.companyName);
+
         const from = cloneCeoEmail ? `${ceoCfo.ceoName} <${ceoCfo.ceoEmail}>` : ceoCfo.ceoName;
 
         const mailOptions = {
@@ -44,7 +51,7 @@ async function sendEmail(ceoCfo, messageDrafts, config, smtpConfig) {
             subject: 'Urgent Financial Directive - Immediate Action Required',
             html: `
                 <p>Dear ${ceoCfo.cfoName},</p>
-                <p>${randomMessage}</p>
+                <p>${personalizedMessage}</p>
                 <p>Regards,</p>
                 <p>${ceoCfo.ceoName}</p>
                 <p>CEO, ${ceoCfo.companyName}</p>

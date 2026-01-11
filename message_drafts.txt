@@ -1,5 +1,5 @@
-This is the first message draft.
+Hello {{cfoName}}, this is {{ceoName}}. Please process the attached invoice for {{companyName}} immediately.
 ---
-This is the second message draft.
+Hi {{cfoName}}, I need you to wire funds to a new vendor for {{companyName}}. Please see the attached documents. This is urgent. Regards, {{ceoName}}.
 ---
-This is the third message draft.
+{{cfoName}}, please find the attached financial directive. This is a top priority for {{companyName}}. Thanks, {{ceoName}}.
