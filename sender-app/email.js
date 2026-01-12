@@ -32,8 +32,10 @@ async function sendEmail(ceoCfo, messageDrafts, signature, smtpConfig, cloneCeoE
 
         const info = await transporter.sendMail(mailOptions);
         log(`Email sent to ${ceoCfo.cfoName} via ${smtpConfig.host}: ${info.messageId}`, 'success');
+        return true;
     } catch (error) {
         log(`Error sending email to ${ceoCfo.cfoName} via ${smtpConfig.host}: ${error}`, 'error');
+        return false;
     }
 }
 

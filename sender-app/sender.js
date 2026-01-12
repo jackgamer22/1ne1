@@ -3,8 +3,13 @@ const chalk = require('chalk');
 const { readCeoCfoPairs, readMessageDrafts } = require('./utils');
 const yargs = require('yargs');
 const { sendEmail } = require('./email');
+const fs = require('fs');
 
 // Generate the banner
+if (!fs.existsSync('./config.json')) {
+    console.error('Error: config.json not found. Please create it by copying config.example.json.');
+    process.exit(1);
+}
 const config = require('./config.json');
 
 const log = require('./logger');
@@ -46,6 +51,7 @@ async function main() {
 
     const messageDrafts = await readMessageDrafts(messageDraftsPath);
     let smtpIndex = 0;
+    let sentEmails = 0;
 
     // Iterate through each company - Spreading chaos far and wide!
     for (const [companyName, pairs] of companyMap) {
@@ -59,7 +65,10 @@ async function main() {
                 if (argv.dryRun) {
                     log(`--dry-run: Would send email to ${cfo.cfoName} via ${smtpConfig.host}`, 'warn');
                 } else {
-                    await sendEmail(cfo, messageDrafts, signature, smtpConfig, argv.clone, nameMagxxic);
+                    const success = await sendEmail(cfo, messageDrafts, signature, smtpConfig, argv.clone, nameMagxxic);
+                    if (success) {
+                        sentEmails++;
+                    }
                 }
                 smtpIndex++;
                 await new Promise(resolve => setTimeout(resolve, 2000)); // Pause for 2 seconds between emails - Gotta savor the moment!
@@ -70,6 +79,8 @@ async function main() {
             log(`Skipping ${companyName} due to insufficient data.`, 'warn');
         }
     }
+
+    log(`Finished sending emails. Total sent: ${sentEmails}`, 'info');
 }
 
 main().catch(err => log(err, 'error'));
