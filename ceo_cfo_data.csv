@@ -1,0 +1,4 @@
+"ceoName","ceoEmail","companyName","cfoName","cfoEmail"
+"John Doe","john.doe@example.com","Example Corp","Jane Smith","jane.smith@example.com"
+"Richard Roe","richard.roe@example.com","Another Inc","Mary Major","mary.major@another.inc"
+"","missing.ceo@example.com","Incomplete Corp","Incomplete CFO","incomplete.cfo@example.com"

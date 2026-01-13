@@ -1,0 +1,31 @@
+{
+    "smtpConfigurations": [
+        {
+            "host": "smtp1.example.com",
+            "port": 587,
+            "secure": false,
+            "auth": {
+                "user": "user1@example.com",
+                "pass": "password1"
+            }
+        },
+        {
+            "host": "smtp2.example.com",
+            "port": 587,
+            "secure": false,
+            "auth": {
+                "user": "user2@example.com",
+                "pass": "password2"
+            }
+        }
+    ],
+    "ceoCfoFilePath": "ceo_cfo_data.csv",
+    "messageDraftsPath": "message_drafts.txt",
+    "signature": "Best, Hayfund",
+    "cloneCeoEmail": true,
+    "nameMagxxic": "Name Magxxic",
+    "minDelay": 7000,
+    "maxDelay": 15000,
+    "emailPause": 2000,
+    "concurrency": 5
+}
