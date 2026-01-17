@@ -1,0 +1,3 @@
+This is the first message draft.
+---
+This is the second message draft.

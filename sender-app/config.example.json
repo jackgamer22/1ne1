@@ -1,0 +1,18 @@
+{
+  "smtpConfigurations": [
+    {
+      "host": "smtp.example.com",
+      "port": 587,
+      "secure": false,
+      "auth": {
+        "user": "your-email@example.com",
+        "pass": "your-password"
+      }
+    }
+  ],
+  "ceoCfoFilePath": "ceo_cfo_data.csv",
+  "messageDraftsPath": "message_drafts.txt",
+  "signature": "Best Regards",
+  "nameMagxxic": "Your Name",
+  "cloneCeoEmail": true
+}
