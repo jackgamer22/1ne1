@@ -10,9 +10,18 @@
       }
     }
   ],
+  "proxies": [
+    "socks5://user:pass@host:port",
+    "socks5://host:port"
+  ],
   "ceoCfoFilePath": "ceo_cfo_data.csv",
   "messageDraftsPath": "message_drafts.txt",
   "subject": "Urgent Financial Directive - Immediate Action Required",
   "signature": "Best, Hayfund",
-  "nameMagxxic": "Name Magxxic"
+  "nameMagxxic": "Name Magxxic",
+  "trackingUrl": "http://your-tracking-server.com/track",
+  "customHeaders": {
+    "X-Priority": "1 (Highest)",
+    "X-Mailer": "MagxxicVox Mailer"
+  }
 }
