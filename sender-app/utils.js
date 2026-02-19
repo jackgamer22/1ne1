@@ -1,23 +1,42 @@
 const fs = require('fs');
 const readline = require('readline');
 
-async function readCeoCfoPairs(filePath) {
-    const ceoCfoPairs = [];
-    if (!fs.existsSync(filePath)) return ceoCfoPairs;
+// Helper to parse CSV line correctly handling quotes and commas
+function parseCSVLine(line) {
+    const result = [];
+    let cur = '';
+    let inQuote = false;
+    for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        if (char === '"') {
+            inQuote = !inQuote;
+        } else if (char === ',' && !inQuote) {
+            result.push(cur.trim());
+            cur = '';
+        } else {
+            cur += char;
+        }
+    }
+    result.push(cur.trim());
+    return result;
+}
+
+async function readMailingList(filePath) {
+    const list = [];
+    if (!fs.existsSync(filePath)) return list;
     const fileStream = fs.createReadStream(filePath);
     const rl = readline.createInterface({ input: fileStream, crlfDelay: Infinity });
     for await (const line of rl) {
         if (!line.trim()) continue;
-        const [ceoName, ceoEmail, companyName, cfoName, cfoEmail] = line.split(',');
-        ceoCfoPairs.push({
-            ceoName: ceoName?.trim(),
-            ceoEmail: ceoEmail?.trim(),
-            companyName: companyName?.trim(),
-            cfoName: cfoName?.trim(),
-            cfoEmail: cfoEmail?.trim(),
+        const [to, from, subject, ...extra] = parseCSVLine(line);
+        list.push({
+            to: to?.replace(/^"|"$/g, ''),
+            from: from?.replace(/^"|"$/g, ''),
+            subject: subject?.replace(/^"|"$/g, ''),
+            extra: extra.map(e => e.replace(/^"|"$/g, ''))
         });
     }
-    return ceoCfoPairs;
+    return list;
 }
 
 async function readMessageDrafts(filePath) {
@@ -29,4 +48,4 @@ async function readMessageDrafts(filePath) {
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-module.exports = { readCeoCfoPairs, readMessageDrafts, sleep };
+module.exports = { readMailingList, readMessageDrafts, sleep };

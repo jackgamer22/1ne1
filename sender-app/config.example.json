@@ -11,17 +11,16 @@
     }
   ],
   "proxies": [
-    "socks5://user:pass@host:port",
     "socks5://host:port"
   ],
-  "ceoCfoFilePath": "ceo_cfo_data.csv",
-  "messageDraftsPath": "message_drafts.txt",
-  "subject": "Urgent Financial Directive - Immediate Action Required",
-  "signature": "Best, Hayfund",
-  "nameMagxxic": "Name Magxxic",
-  "trackingUrl": "http://your-tracking-server.com/track",
+  "mailingListPath": "mailing_list.csv",
+  "message": {
+    "from": "default-sender@example.com",
+    "subject": "Default Subject",
+    "body": "<h1>Hello</h1><p>This is a test email.</p>"
+  },
+  "trackingUrl": "http://example.com/track",
   "customHeaders": {
-    "X-Priority": "1 (Highest)",
-    "X-Mailer": "MagxxicVox Mailer"
+    "X-Priority": "3 (Normal)"
   }
 }

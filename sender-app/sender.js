@@ -6,36 +6,25 @@ const fs = require('fs');
 const path = require('path');
 const Table = require('cli-table3');
 const logger = require('./logger');
-const { readCeoCfoPairs, readMessageDrafts, sleep } = require('./utils');
+const { readMailingList, sleep } = require('./utils');
 const { sendEmail } = require('./email');
 const { ProxyRotator } = require('./proxy');
 
+function printBanner() {
+    console.clear();
+    const bannerText = figlet.textSync('MagxxicVox', { font: 'Standard' });
+    console.log(chalk.blue(bannerText));
+    console.log(chalk.yellow('    >>> ADVANCED SMTP UTILITY - STATUS: READY <<<'));
+    console.log(chalk.green('    MODULAR MULTI-RELAY MAILER | v3.0.1\n'));
+}
+
 async function main() {
     const argv = yargs(hideBin(process.argv))
-        .option('clone', { type: 'boolean', description: 'Clone CEO Email', default: false })
         .option('dry-run', { type: 'boolean', description: 'Dry run mode', default: false })
         .help()
         .argv;
 
-    // Artistic Banner
-    console.clear();
-    const logo = `
-          @@@@      @@@@@@@@@@@@@@@@      @@@@
-          @@@@      @@@@@@@@@@@@@@@@      @@@@
-                    @@@@@@@@@@@@@@@@
-                        @@@@@@@@
-                    @@@@@@@@@@@@@@@@
-                  @@@@@@@@@@@@@@@@@@@@
-                @@@@@@@@@@@@@@@@@@@@@@@@
-    `;
-    console.log(chalk.red(logo));
-
-    const bannerText = figlet.textSync('MagxxicVox', { font: 'ANSI Shadow' });
-    console.log(chalk.blue(bannerText));
-
-    console.log(chalk.yellow('    >>> PROXY-ONLY DIRECT-TO-MX DELIVERY SYSTEM - STATUS: ARMED <<<'));
-    console.log(chalk.cyan('    [RFC-2822] [DKIM-SIGNED] [SOCKS5-CHAIN] [ZERO-SMTP-RELAY]'));
-    console.log(chalk.green('    VERSION 2.0.0 | BUILD 2026-02-19 | CEO to CFO, HR Mass sender\n'));
+    printBanner();
 
     const configPath = path.join(__dirname, 'config.json');
     if (!fs.existsSync(configPath)) {
@@ -51,88 +40,63 @@ async function main() {
         process.exit(1);
     }
 
-    const { smtpConfigurations, proxies, ceoCfoFilePath, messageDraftsPath, signature, nameMagxxic, subject, trackingUrl, customHeaders } = config;
+    const { smtpConfigurations, proxies, mailingListPath, message, trackingUrl, customHeaders } = config;
 
-    const absCeoCfoFilePath = path.isAbsolute(ceoCfoFilePath) ? ceoCfoFilePath : path.join(process.cwd(), ceoCfoFilePath);
-    const absMessageDraftsPath = path.isAbsolute(messageDraftsPath) ? messageDraftsPath : path.join(process.cwd(), messageDraftsPath);
+    const absMailingListPath = path.isAbsolute(mailingListPath) ? mailingListPath : path.join(process.cwd(), mailingListPath);
+    const mailingList = await readMailingList(absMailingListPath);
 
-    const ceoCfoPairs = await readCeoCfoPairs(absCeoCfoFilePath);
-    const messageDrafts = await readMessageDrafts(absMessageDraftsPath);
-
-    if (ceoCfoPairs.length === 0 || messageDrafts.length === 0) {
-        logger.warn('Missing data (pairs or drafts). Exiting.');
+    if (mailingList.length === 0) {
+        logger.warn('Mailing list is empty. Exiting.');
         return;
     }
 
-    // Proxy setup
     const rotator = new ProxyRotator(proxies);
     await rotator.validateAll();
-
-    const companyMap = new Map();
-    ceoCfoPairs.forEach(pair => {
-        if (!companyMap.has(pair.companyName)) companyMap.set(pair.companyName, []);
-        companyMap.get(pair.companyName).push(pair);
-    });
 
     let stats = { success: 0, failed: 0, total: 0 };
     let smtpIndex = 0;
 
     const renderDashboard = () => {
+        printBanner();
         const table = new Table({
             head: [chalk.cyan('Total'), chalk.green('Success'), chalk.red('Failed'), chalk.yellow('Remaining')],
             colWidths: [15, 15, 15, 15]
         });
-        const remaining = Array.from(companyMap.keys()).length - (stats.success + stats.failed);
-        table.push([stats.total, stats.success, stats.failed, remaining >= 0 ? remaining : 0]);
-        console.log('\n' + table.toString());
+        const remaining = mailingList.length - (stats.success + stats.failed);
+        table.push([mailingList.length, stats.success, stats.failed, remaining >= 0 ? remaining : 0]);
+        console.log(table.toString());
+        console.log('\nLast status log:');
     };
 
-    for (const [companyName, pairs] of companyMap) {
-        const ceoEntry = pairs.find(p => p.ceoName && p.ceoEmail);
-        const cfoEntry = pairs.find(p => p.cfoName && p.cfoEmail);
+    for (const recipient of mailingList) {
+        const smtpConfig = smtpConfigurations[smtpIndex % smtpConfigurations.length];
+        const proxy = rotator.getNext();
 
-        if (ceoEntry && cfoEntry) {
-            stats.total++;
-            const combined = {
-                ceoName: ceoEntry.ceoName,
-                ceoEmail: ceoEntry.ceoEmail,
-                companyName: companyName,
-                cfoName: cfoEntry.cfoName,
-                cfoEmail: cfoEntry.cfoEmail
-            };
+        const from = recipient.from || message.from;
+        const subject = recipient.subject || message.subject;
 
-            const smtpConfig = smtpConfigurations[smtpIndex % smtpConfigurations.length];
-            const randomMessage = messageDrafts[Math.floor(Math.random() * messageDrafts.length)];
-            const proxy = rotator.getNext();
+        logger.info(`Sending to ${recipient.to} from ${from}...`);
 
-            const delay = Math.floor(Math.random() * (15000 - 7000 + 1)) + 7000;
-            logger.info(`[${companyName}] Sending to ${combined.cfoName}...`);
+        const result = await sendEmail({
+            to: recipient.to,
+            from: from,
+            subject: subject,
+            body: message.body,
+            smtpConfig,
+            proxy,
+            trackingUrl,
+            customHeaders,
+            dryRun: argv['dry-run']
+        });
 
-            if (!argv['dry-run']) await sleep(delay);
+        if (result) stats.success++; else stats.failed++;
+        smtpIndex++;
+        renderDashboard();
 
-            const result = await sendEmail({
-                ceoCfo: combined,
-                randomMessage,
-                signature,
-                smtpConfig,
-                cloneCeoEmail: argv.clone,
-                nameMagxxic,
-                subject,
-                proxy,
-                trackingUrl,
-                customHeaders,
-                dryRun: argv['dry-run']
-            });
-
-            if (result) stats.success++; else stats.failed++;
-            smtpIndex++;
-            renderDashboard();
-
-            if (!argv['dry-run']) await sleep(2000);
-        }
+        if (!argv['dry-run']) await sleep(2000);
     }
 
     logger.info('Task completed.');
 }
 
-main().catch(err => logger.error('Main loop error:', err));
+main().catch(err => logger.error('Main error:', err));
