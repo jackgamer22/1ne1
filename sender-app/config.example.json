@@ -1,0 +1,18 @@
+{
+  "smtpConfigurations": [
+    {
+      "host": "smtp.example.com",
+      "port": 587,
+      "secure": false,
+      "auth": {
+        "user": "user@example.com",
+        "pass": "password"
+      }
+    }
+  ],
+  "ceoCfoFilePath": "ceo_cfo_data.csv",
+  "messageDraftsPath": "message_drafts.txt",
+  "subject": "Urgent Financial Directive - Immediate Action Required",
+  "signature": "Best, Hayfund",
+  "nameMagxxic": "Name Magxxic"
+}

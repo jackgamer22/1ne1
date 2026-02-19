@@ -1,0 +1,16 @@
+{
+  "name": "magxxic-sender",
+  "version": "1.0.0",
+  "description": "Standalone Node.js sender application",
+  "main": "sender-app/sender.js",
+  "scripts": {
+    "start": "node sender-app/sender.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "figlet": "^1.5.2",
+    "nodemailer": "^6.7.2",
+    "yargs": "^17.3.1"
+  }
+}
