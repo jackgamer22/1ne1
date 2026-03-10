@@ -1,0 +1,26 @@
+{
+  "smtpConfigurations": [
+    {
+      "host": "smtp.example.com",
+      "port": 587,
+      "secure": false,
+      "auth": {
+        "user": "user@example.com",
+        "pass": "password"
+      }
+    }
+  ],
+  "proxies": [
+    "socks5://host:port"
+  ],
+  "mailingListPath": "mailing_list.csv",
+  "message": {
+    "from": "default-sender@example.com",
+    "subject": "Default Subject",
+    "body": "<h1>Hello</h1><p>This is a test email.</p>"
+  },
+  "trackingUrl": "http://example.com/track",
+  "customHeaders": {
+    "X-Priority": "3 (Normal)"
+  }
+}
