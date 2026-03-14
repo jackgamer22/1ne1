@@ -9,6 +9,8 @@ import re
 import socks
 import socket
 import requests
+import asyncio
+import base64
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -18,6 +20,7 @@ from email.utils import parseaddr
 from urllib.parse import urlparse
 from defusedxml import ElementTree as ET
 
+from playwright.async_api import async_playwright
 from rich.console import Console
 from rich.table import Table
 from rich.live import Live
@@ -26,11 +29,55 @@ console = Console()
 
 BANNER = """
 **********************************
-*      MAGXXICVOT B2B SNDR       *
+*      MAGXXXICVOT B2B SNDR      *
 **********************************
 """
 
 stats = []
+
+class HTMLConverter:
+    @staticmethod
+    async def convert(html_path, output_formats):
+        results = []
+        async with async_playwright() as p:
+            browser = await p.chromium.launch()
+            page = await browser.new_page()
+
+            # Load the HTML file
+            abs_path = f"file://{os.path.abspath(html_path)}"
+            await page.goto(abs_path)
+            await page.wait_for_load_state("networkidle")
+
+            base_name = os.path.splitext(html_path)[0]
+
+            if 'pdf' in output_formats:
+                pdf_path = f"{base_name}.pdf"
+                await page.pdf(path=pdf_path)
+                results.append(pdf_path)
+
+            if 'png' in output_formats or 'image' in output_formats:
+                img_path = f"{base_name}.png"
+                await page.screenshot(path=img_path, full_page=True)
+                results.append(img_path)
+
+            if 'svg' in output_formats:
+                svg_path = f"{base_name}.svg"
+                # Generate a screenshot and wrap it in SVG for high-fidelity conversion
+                screenshot_bytes = await page.screenshot(full_page=True)
+                b64_img = base64.b64encode(screenshot_bytes).decode()
+
+                # Get dimensions
+                metrics = await page.evaluate("() => ({width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight})")
+
+                svg_content = f"""<svg width="{metrics['width']}" height="{metrics['height']}" xmlns="http://www.w3.org/2000/svg">
+  <image href="data:image/png;base64,{b64_img}" width="100%" height="100%"/>
+</svg>"""
+                with open(svg_path, 'w') as f:
+                    f.write(svg_content)
+                results.append(svg_path)
+
+            await browser.close()
+        return results
 
 class ProxyManager:
     def __init__(self, proxies):
@@ -293,7 +340,32 @@ def send_email(config, recipient, context, proxy_manager=None):
         full_body = f"{body_text}\n\n--\n{email_cfg.get('signature', '')}"
         msg.attach(MIMEText(full_body, 'plain'))
 
-    for file_path in email_cfg.get('attachments', []):
+    # Attachments
+    attachments = []
+    if email_cfg.get('send_attachments', True):
+        attachments = list(email_cfg.get('attachments', []))
+
+    # HTML Conversion logic
+    if email_cfg.get('convert_html_attachments'):
+        new_attachments = []
+        for file_path in attachments:
+            if file_path.endswith('.html') and os.path.exists(file_path):
+                formats = email_cfg.get('attachment_output_formats', ['pdf'])
+                try:
+                    # Run async conversion in sync context
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    converted_files = loop.run_until_complete(HTMLConverter.convert(file_path, formats))
+                    loop.close()
+                    new_attachments.extend(converted_files)
+                except Exception as e:
+                    console.print(f"[red]Failed to convert {file_path}: {e}[/red]")
+                    new_attachments.append(file_path)
+            else:
+                new_attachments.append(file_path)
+        attachments = new_attachments
+
+    for file_path in attachments:
         if os.path.exists(file_path):
             ctype, encoding = mimetypes.guess_type(file_path)
             if ctype is None or encoding is not None:
