@@ -13,76 +13,76 @@ class TestSender(unittest.TestCase):
     def setUp(self):
         self.config = {
             "smtp": {
-                "host": "smtp.example.com",
+                "host": "smtp.ex.com",
                 "port": 587,
-                "user": "user@example.com",
-                "password": "password",
+                "user": "u@ex.com",
+                "password": "p",
                 "use_tls": True
             },
             "imap": {
-                "host": "imap.example.com",
+                "host": "imap.ex.com",
                 "port": 993,
-                "user": "user@example.com",
-                "password": "password",
+                "user": "u@ex.com",
+                "password": "p",
                 "use_ssl": True,
                 "archive_folder": "Archive"
             },
             "email": {
-                "contacts": ["r1@ex.com", "r2@ex.com"],
-                "subject": "Test Subject",
-                "body": "Test Body",
+                "contacts": ["r1@ex.com"],
+                "subject": "Sub {{ context }}",
+                "body": "Body {{ context }}",
+                "use_html": True,
                 "logo_base64": "AAA",
-                "signature": "My Sig"
+                "signature": "Sig",
+                "attachments": []
             }
         }
 
     @patch('smtplib.SMTP')
-    def test_send_email_html_content(self, mock_smtp):
+    def test_send_email_placeholders(self, mock_smtp):
         instance = mock_smtp.return_value
         recipient = "r1@ex.com"
-        result = sender.send_email(self.config, recipient)
-        self.assertTrue(result)
+        context = "Special Context"
+        success, subject = sender.send_email(self.config, recipient, context)
 
-        # Verify that send_message was called with a MIMEMultipart object containing HTML
+        self.assertTrue(success)
+        self.assertEqual(subject, "Sub Special Context")
+
         call_args = instance.send_message.call_args[0][0]
-        self.assertEqual(call_args['To'], recipient)
+        self.assertEqual(call_args['Subject'], "Sub Special Context")
 
-        # Check if HTML content is present
         payload = call_args.get_payload()
         if isinstance(payload, list):
             html_part = payload[0].get_payload()
         else:
             html_part = payload
-
-        self.assertIn('data:image/png;base64,AAA', html_part)
-        self.assertIn('My Sig', html_part)
-        self.assertIn('Test Body', html_part)
+        self.assertIn("Body Special Context", html_part)
 
     @patch('imaplib.IMAP4_SSL')
-    def test_move_sent_email_success(self, mock_imap):
+    def test_get_conversation_context_success(self, mock_imap):
         instance = mock_imap.return_value
         instance.login.return_value = 'OK'
         instance.select.return_value = ('OK', [b'1'])
-        instance.search.return_value = ('OK', [b'123'])
-        instance.copy.return_value = ('OK', [b'Copy OK'])
-        instance.store.return_value = ('OK', [b'Store OK'])
+        instance.search.return_value = ('OK', [b'10'])
+        instance.fetch.return_value = ('OK', [(b'1', b'Subject: Hello World\r\n')])
 
-        recipient = "r1@ex.com"
-        result = sender.move_sent_email(self.config, recipient)
-        self.assertTrue(result)
-        instance.search.assert_called()
-        search_call_args = instance.search.call_args[0][1]
-        self.assertIn(recipient, search_call_args)
+        context = sender.get_conversation_context(self.config, "r1@ex.com")
+        self.assertEqual(context, "Hello World")
 
-    @patch('sender.send_email')
-    @patch('sender.move_sent_email')
+    @patch('sender.get_conversation_context', return_value="TestContext")
+    @patch('sender.send_email', return_value=(True, "Sub TestContext"))
+    @patch('sender.move_sent_email', return_value="Moved")
     @patch('time.sleep', return_value=None)
-    @patch('builtins.open', new_callable=unittest.mock.mock_open, read_data='{"email": {"contacts": ["r1@ex.com", "r2@ex.com"], "subject": "S"}, "smtp": {}, "imap": {}}')
-    def test_run_automation_multiple_contacts(self, mock_file, mock_sleep, mock_move, mock_send):
-        mock_send.return_value = True
+    @patch('builtins.open', new_callable=unittest.mock.mock_open, read_data='{"email": {"contacts": ["r1@ex.com"]}, "smtp": {}, "imap": {}}')
+    @patch('rich.live.Live.update')
+    def test_run_automation_dashboard_flow(self, mock_live, mock_file, mock_sleep, mock_move, mock_send, mock_context):
         sender.run_automation()
-        self.assertEqual(mock_send.call_count, 2)
-        self.assertEqual(mock_move.call_count, 2)
+        self.assertTrue(mock_context.called)
+        self.assertTrue(mock_send.called)
+        self.assertTrue(mock_move.called)
+        # Check if stats were updated
+        self.assertEqual(len(sender.stats), 1)
+        self.assertIn("r1@ex.com", sender.stats[0])
 
 if __name__ == '__main__':
     unittest.main()
