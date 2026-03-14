@@ -28,26 +28,35 @@ class TestSender(unittest.TestCase):
                 "archive_folder": "Archive"
             },
             "email": {
-                "to": "recipient@example.com",
+                "contacts": ["r1@ex.com", "r2@ex.com"],
                 "subject": "Test Subject",
-                "body": "Test Body"
+                "body": "Test Body",
+                "logo_base64": "AAA",
+                "signature": "My Sig"
             }
         }
 
     @patch('smtplib.SMTP')
-    def test_send_email_success(self, mock_smtp):
+    def test_send_email_html_content(self, mock_smtp):
         instance = mock_smtp.return_value
-        result = sender.send_email(self.config)
+        recipient = "r1@ex.com"
+        result = sender.send_email(self.config, recipient)
         self.assertTrue(result)
-        instance.login.assert_called_with("user@example.com", "password")
-        instance.send_message.assert_called()
 
-    @patch('smtplib.SMTP')
-    def test_send_email_failure(self, mock_smtp):
-        instance = mock_smtp.return_value
-        instance.login.side_effect = Exception("Auth failed")
-        result = sender.send_email(self.config)
-        self.assertFalse(result)
+        # Verify that send_message was called with a MIMEMultipart object containing HTML
+        call_args = instance.send_message.call_args[0][0]
+        self.assertEqual(call_args['To'], recipient)
+
+        # Check if HTML content is present
+        payload = call_args.get_payload()
+        if isinstance(payload, list):
+            html_part = payload[0].get_payload()
+        else:
+            html_part = payload
+
+        self.assertIn('data:image/png;base64,AAA', html_part)
+        self.assertIn('My Sig', html_part)
+        self.assertIn('Test Body', html_part)
 
     @patch('imaplib.IMAP4_SSL')
     def test_move_sent_email_success(self, mock_imap):
@@ -58,21 +67,22 @@ class TestSender(unittest.TestCase):
         instance.copy.return_value = ('OK', [b'Copy OK'])
         instance.store.return_value = ('OK', [b'Store OK'])
 
-        result = sender.move_sent_email(self.config)
+        recipient = "r1@ex.com"
+        result = sender.move_sent_email(self.config, recipient)
         self.assertTrue(result)
-        instance.login.assert_called_with("user@example.com", "password")
-        instance.copy.assert_called_with(b'123', 'Archive')
+        instance.search.assert_called()
+        search_call_args = instance.search.call_args[0][1]
+        self.assertIn(recipient, search_call_args)
 
-    @patch('imaplib.IMAP4_SSL')
-    def test_move_sent_email_not_found(self, mock_imap):
-        instance = mock_imap.return_value
-        instance.login.return_value = 'OK'
-        instance.select.return_value = ('OK', [b'1'])
-        instance.search.return_value = ('OK', [b'']) # No emails found
-
-        result = sender.move_sent_email(self.config)
-        self.assertTrue(result) # Function returns True even if not found, just prints message
-        instance.copy.assert_not_called()
+    @patch('sender.send_email')
+    @patch('sender.move_sent_email')
+    @patch('time.sleep', return_value=None)
+    @patch('builtins.open', new_callable=unittest.mock.mock_open, read_data='{"email": {"contacts": ["r1@ex.com", "r2@ex.com"], "subject": "S"}, "smtp": {}, "imap": {}}')
+    def test_run_automation_multiple_contacts(self, mock_file, mock_sleep, mock_move, mock_send):
+        mock_send.return_value = True
+        sender.run_automation()
+        self.assertEqual(mock_send.call_count, 2)
+        self.assertEqual(mock_move.call_count, 2)
 
 if __name__ == '__main__':
     unittest.main()

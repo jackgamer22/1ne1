@@ -15,8 +15,13 @@
         "archive_folder": "Archive"
     },
     "email": {
-        "to": "recipient@example.com",
+        "contacts": [
+            "recipient1@example.com",
+            "recipient2@example.com"
+        ],
         "subject": "B2B Inquiry",
-        "body": "Hello,\n\nThis is a B2B inquiry.\n\nBest regards,\nMAGXXXICVOT B2B SNDR"
+        "body": "Hello,\n\nThis is a B2B inquiry.\n\nBest regards,",
+        "logo_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+        "signature": "MAGXXXICVOT B2B SNDR Box Signature"
     }
 }
