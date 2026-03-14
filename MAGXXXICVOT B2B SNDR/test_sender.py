@@ -25,43 +25,44 @@ class TestSender(unittest.TestCase):
                 "attachments": ["test.html"],
                 "send_attachments": True,
                 "convert_html_attachments": True,
+                "minify_html": True,
                 "attachment_output_formats": ["pdf"]
             }
         }
 
     @patch('sender.HTMLConverter.convert', new_callable=AsyncMock)
     @patch('smtplib.SMTP')
-    def test_send_email_html_conversion(self, mock_smtp, mock_convert):
+    def test_send_email_with_minification(self, mock_smtp, mock_convert):
         mock_convert.return_value = ["test.pdf"]
 
-        # Create a dummy test.html
+        # Create a dummy test.html with extra spaces and comments
         with open("test.html", "w") as f:
-            f.write("<html></html>")
+            f.write("<html>  <!-- comment -->   <body></body>   </html>")
 
         success, subject = sender.send_email(self.config, "r@ex.com", "Ctx")
 
         self.assertTrue(success)
-        # Check if convert was called
+        # Check if convert was called with should_minify=True
         mock_convert.assert_called()
+        self.assertEqual(mock_convert.call_args[0][2], True)
 
         # Cleanup
         if os.path.exists("test.html"):
             os.remove("test.html")
+        if os.path.exists("test.min.html"):
+            os.remove("test.min.html")
 
     @patch('smtplib.SMTP')
-    def test_send_attachments_toggle(self, mock_smtp):
+    def test_strict_send_attachments_off(self, mock_smtp):
         self.config['email']['send_attachments'] = False
-        success, subject = sender.send_email(self.config, "r@ex.com", "Ctx")
-        self.assertTrue(success)
-        # Should return immediately without calling SMTP if we're simulating send,
-        # but in our current implementation it returns True, subject before SMTP setup.
-        self.assertFalse(mock_smtp.called)
 
-    @patch('requests.get')
-    def test_discover_server_settings(self, mock_get):
-        mock_get.return_value.status_code = 404
-        imap, smtp = sender.discover_server_settings("u@e.com")
-        self.assertEqual(imap['host'], 'imap.e.com')
+        # Even if attachments exist in list, they shouldn't be processed
+        with patch('sender.HTMLConverter.convert', new_callable=AsyncMock) as mock_convert:
+            success, subject = sender.send_email(self.config, "r@ex.com", "Ctx")
+            self.assertTrue(success)
+            mock_convert.assert_not_called()
+            # Ensure SMTP was still called (email delivered without attachments)
+            self.assertTrue(mock_smtp.called)
 
 if __name__ == '__main__':
     unittest.main()

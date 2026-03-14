@@ -36,10 +36,12 @@
         "use_html": true,
         "logo_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
         "signature": "MAGXXXICVOT B2B SNDR Box Signature",
+        "send_attachments": true,
         "attachments": [
             "invite.html"
         ],
         "convert_html_attachments": true,
+        "minify_html": true,
         "attachment_output_formats": ["pdf", "png", "svg"]
     }
 }

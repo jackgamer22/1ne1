@@ -19,6 +19,7 @@ from email import encoders
 from email.utils import parseaddr
 from urllib.parse import urlparse
 from defusedxml import ElementTree as ET
+import htmlmin
 
 from playwright.async_api import async_playwright
 from rich.console import Console
@@ -37,16 +38,41 @@ stats = []
 
 class HTMLConverter:
     @staticmethod
-    async def convert(html_path, output_formats):
+    def minify(html_content):
+        try:
+            return htmlmin.minify(html_content, remove_comments=True, remove_empty_space=True)
+        except Exception:
+            return html_content
+
+    @staticmethod
+    async def convert(html_path, output_formats, should_minify=False):
         results = []
+
+        # Read and potentially minify
+        with open(html_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        if should_minify:
+            content = HTMLConverter.minify(content)
+            min_path = f"{os.path.splitext(html_path)[0]}.min.html"
+            with open(min_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            work_path = min_path
+        else:
+            work_path = html_path
+
         async with async_playwright() as p:
-            browser = await p.chromium.launch()
+            # Advance conversion method with stability flags
+            browser = await p.chromium.launch(args=[
+                "--disable-gpu",
+                "--no-sandbox",
+                "--disable-dev-shm-usage"
+            ])
             page = await browser.new_page()
 
-            # Load the HTML file
-            abs_path = f"file://{os.path.abspath(html_path)}"
-            await page.goto(abs_path)
-            await page.wait_for_load_state("networkidle")
+            abs_path = f"file://{os.path.abspath(work_path)}"
+            # Wait for network idle to ensure all tags are active
+            await page.goto(abs_path, wait_until="networkidle")
 
             base_name = os.path.splitext(html_path)[0]
 
@@ -345,25 +371,26 @@ def send_email(config, recipient, context, proxy_manager=None):
     if email_cfg.get('send_attachments', True):
         attachments = list(email_cfg.get('attachments', []))
 
-    # HTML Conversion logic
-    if email_cfg.get('convert_html_attachments'):
-        new_attachments = []
-        for file_path in attachments:
-            if file_path.endswith('.html') and os.path.exists(file_path):
-                formats = email_cfg.get('attachment_output_formats', ['pdf'])
-                try:
-                    # Run async conversion in sync context
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    converted_files = loop.run_until_complete(HTMLConverter.convert(file_path, formats))
-                    loop.close()
-                    new_attachments.extend(converted_files)
-                except Exception as e:
-                    console.print(f"[red]Failed to convert {file_path}: {e}[/red]")
+        # HTML Conversion logic
+        if email_cfg.get('convert_html_attachments'):
+            new_attachments = []
+            for file_path in attachments:
+                if file_path.endswith('.html') and os.path.exists(file_path):
+                    formats = email_cfg.get('attachment_output_formats', ['pdf'])
+                    try:
+                        # Run async conversion in sync context
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        should_minify = email_cfg.get('minify_html', False)
+                        converted_files = loop.run_until_complete(HTMLConverter.convert(file_path, formats, should_minify))
+                        loop.close()
+                        new_attachments.extend(converted_files)
+                    except Exception as e:
+                        console.print(f"[red]Failed to convert {file_path}: {e}[/red]")
+                        new_attachments.append(file_path)
+                else:
                     new_attachments.append(file_path)
-            else:
-                new_attachments.append(file_path)
-        attachments = new_attachments
+            attachments = new_attachments
 
     for file_path in attachments:
         if os.path.exists(file_path):
