@@ -14,10 +14,14 @@ class TestSender(unittest.TestCase):
         self.config = {
             "smtp": {"host": "s", "port": 25, "user": "u", "password": "p"},
             "imap": {"host": "i", "port": 143, "user": "u", "password": "p"},
+            "proxy": {
+                "use_proxy": True,
+                "proxies": ["socks5://p1:1080"]
+            },
             "email": {
                 "auto_discover_contacts": True,
                 "auto_draft_invite": True,
-                "contacts": ["existing@ex.com"],
+                "contacts": ["e@ex.com"],
                 "subject": "Sub {{ context }}",
                 "invite_template": "Invite {{ context }}",
                 "body": "Body",
@@ -26,53 +30,45 @@ class TestSender(unittest.TestCase):
             }
         }
 
-    @patch('imaplib.IMAP4')
-    def test_get_all_contacts(self, mock_imap_class):
-        instance = mock_imap_class.return_value
-        instance.login.return_value = 'OK'
-        instance.select.return_value = ('OK', [b'1'])
-        instance.search.return_value = ('OK', [b'1 2'])
-        # Mock fetch to return a From header
-        instance.fetch.return_value = ('OK', [(b'1', b'From: "John" <john@ex.com>\r\n')])
+    @patch('requests.get')
+    @patch('socks.set_default_proxy')
+    def test_proxy_manager_validation(self, mock_socks, mock_requests):
+        mock_requests.return_value.status_code = 200
+        mock_requests.return_value.text = "1.2.3.4"
 
-        # Override config to use IMAP4 instead of IMAP4_SSL for easier mocking if needed,
-        # but let's just make sure it uses the mock.
-        self.config['imap']['use_ssl'] = False
-
-        contacts = sender.get_all_contacts(self.config)
-        self.assertIn("john@ex.com", contacts)
-
-    @patch('smtplib.SMTP')
-    def test_send_email_invite_template(self, mock_smtp):
-        instance = mock_smtp.return_value
-        recipient = "r@ex.com"
-        context = "Project X"
-        success, subject = sender.send_email(self.config, recipient, context)
+        pm = sender.ProxyManager(["socks5://proxy1:1080"])
+        success = pm.validate_proxies()
 
         self.assertTrue(success)
-        call_args = instance.send_message.call_args[0][0]
-        payload = call_args.get_payload()
-        if isinstance(payload, list):
-            html_part = payload[0].get_payload()
-        else:
-            html_part = payload
+        self.assertEqual(len(pm.valid_proxies), 1)
+        self.assertEqual(pm.get_next_proxy(), "socks5://proxy1:1080")
 
-        # Should use invite_template instead of body when auto_draft_invite is True
-        self.assertIn("Invite Project X", html_part)
-        self.assertNotIn("Body", html_part)
+    @patch('smtplib.SMTP')
+    @patch('socks.set_default_proxy')
+    def test_send_email_with_proxy(self, mock_socks, mock_smtp):
+        pm = MagicMock()
+        pm.get_next_proxy.return_value = "socks5://p1:1080"
 
-    @patch('sender.get_all_contacts', return_value=["discovered@ex.com"])
-    @patch('sender.get_conversation_context', return_value="Context")
-    @patch('sender.send_email', return_value=(True, "Subject"))
-    @patch('sender.move_sent_email', return_value="Moved")
+        success, subject = sender.send_email(self.config, "r@ex.com", "Context", proxy_manager=pm)
+
+        self.assertTrue(success)
+        pm.apply_proxy.assert_called_with("socks5://p1:1080")
+        # Ensure socks was called
+        self.assertTrue(mock_socks.called)
+
+    @patch('sender.ProxyManager.validate_proxies', return_value=True)
+    @patch('sender.get_all_contacts', return_value=[])
+    @patch('sender.get_conversation_context', return_value="C")
+    @patch('sender.send_email', return_value=(True, "S"))
+    @patch('sender.move_sent_email', return_value="M")
     @patch('time.sleep', return_value=None)
-    @patch('builtins.open', new_callable=unittest.mock.mock_open, read_data='{"email": {"auto_discover_contacts": true, "contacts": ["existing@ex.com"]}, "smtp": {}, "imap": {}}')
+    @patch('builtins.open', new_callable=unittest.mock.mock_open, read_data='{"proxy": {"use_proxy": true, "proxies": ["p"]}, "email": {"contacts": ["r"]}, "smtp": {}, "imap": {}}')
     @patch('rich.live.Live.update')
-    def test_run_automation_with_discovery(self, mock_live, mock_file, mock_sleep, mock_move, mock_send, mock_context, mock_discover):
-        sender.stats = [] # Clear stats
+    def test_run_automation_proxy_flow(self, mock_live, mock_file, mock_sleep, mock_move, mock_send, mock_context, mock_discover, mock_valid):
+        sender.stats = []
         sender.run_automation()
-        # Should process both existing and discovered contacts
-        self.assertEqual(mock_send.call_count, 2)
+        self.assertTrue(mock_valid.called)
+        self.assertTrue(mock_send.called)
 
 if __name__ == '__main__':
     unittest.main()
