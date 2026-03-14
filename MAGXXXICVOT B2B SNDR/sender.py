@@ -2,6 +2,7 @@ import smtplib
 import imaplib
 import json
 import time
+import argparse
 import os
 import mimetypes
 import re
@@ -15,6 +16,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 from email.utils import parseaddr
 from urllib.parse import urlparse
+from defusedxml import ElementTree as ET
 
 from rich.console import Console
 from rich.table import Table
@@ -43,7 +45,6 @@ class ProxyManager:
                 parsed = urlparse(proxy_url)
                 proxy_type = socks.SOCKS5 if parsed.scheme == 'socks5' else socks.SOCKS4
 
-                # Setup socket to use proxy for validation
                 socks.set_default_proxy(
                     proxy_type,
                     parsed.hostname,
@@ -53,13 +54,11 @@ class ProxyManager:
                 )
                 socket.socket = socks.socksocket
 
-                # Check IP via ipify
                 response = requests.get('https://api.ipify.org', timeout=10)
                 if response.status_code == 200:
                     console.print(f"✅ Proxy {proxy_url} is valid. IP: {response.text}", style="green")
                     self.valid_proxies.append(proxy_url)
 
-                # Reset socket
                 socks.set_default_proxy()
                 socket.socket = socket._socket.socket if hasattr(socket, '_socket') else socket.socket
             except Exception as e:
@@ -88,6 +87,52 @@ class ProxyManager:
             password=parsed.password
         )
         socket.socket = socks.socksocket
+
+def discover_server_settings(email):
+    domain = email.split('@')[-1]
+    url = f"https://autoconfig.thunderbird.net/v1.1/{domain}"
+
+    console.print(f"🔍 Attempting auto-discovery for {domain}...", style="cyan")
+
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            root = ET.fromstring(response.content)
+
+            imap_settings = {}
+            smtp_settings = {}
+
+            for server in root.findall('.//incomingServer'):
+                if server.get('type') == 'imap':
+                    imap_settings['host'] = server.find('hostname').text
+                    imap_settings['port'] = int(server.find('port').text)
+                    imap_settings['use_ssl'] = server.find('socketType').text == 'SSL'
+                    break
+
+            for server in root.findall('.//outgoingServer'):
+                if server.get('type') == 'smtp':
+                    smtp_settings['host'] = server.find('hostname').text
+                    smtp_settings['port'] = int(server.find('port').text)
+                    smtp_settings['use_tls'] = server.find('socketType').text == 'STARTTLS'
+                    break
+
+            if imap_settings and smtp_settings:
+                console.print(f"✅ Auto-discovery successful for {domain}!", style="green")
+                return imap_settings, smtp_settings
+    except Exception as e:
+        console.print(f"⚠️ Auto-discovery failed: {e}", style="yellow")
+
+    # Fallback to common patterns
+    console.print(f"⚠️ Falling back to common patterns for {domain}...", style="yellow")
+    return {
+        "host": f"imap.{domain}",
+        "port": 993,
+        "use_ssl": True
+    }, {
+        "host": f"smtp.{domain}",
+        "port": 587,
+        "use_tls": True
+    }
 
 def get_stats_table():
     table = Table(title="MAGXXICVOT B2B SNDR Dashboard")
@@ -279,6 +324,11 @@ def send_email(config, recipient, context, proxy_manager=None):
         socks.set_default_proxy()
 
 def run_automation():
+    parser = argparse.ArgumentParser(description="MAGXXICVOT B2B SNDR Automation")
+    parser.add_argument('--use-proxy', action='store_true', help='Force enable proxy usage')
+    parser.add_argument('--no-proxy', action='store_true', help='Force disable proxy usage')
+    args = parser.parse_args()
+
     console.print(BANNER, style="bold blue")
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -290,6 +340,36 @@ def run_automation():
     except FileNotFoundError:
         console.print("[bold red]config.json not found! 😱[/bold red]")
         return
+
+    # Auto-discovery
+    auth_cfg = config.get('auth', {})
+    if auth_cfg.get('auto_discovery'):
+        email = auth_cfg.get('email')
+        password = auth_cfg.get('password')
+        if email and password and (not config.get('smtp') or not config.get('imap')):
+            imap_discovered, smtp_discovered = discover_server_settings(email)
+
+            if not config.get('imap'):
+                config['imap'] = imap_discovered
+                config['imap']['user'] = email
+                config['imap']['password'] = password
+
+            if not config.get('smtp'):
+                config['smtp'] = smtp_discovered
+                config['smtp']['user'] = email
+                config['smtp']['password'] = password
+
+    # Override config with CLI arguments
+    if args.use_proxy:
+        if 'proxy' not in config:
+            config['proxy'] = {}
+        config['proxy']['use_proxy'] = True
+        console.print("[cyan]ℹ️ Proxy usage forced via CLI flag.[/cyan]")
+    elif args.no_proxy:
+        if 'proxy' not in config:
+            config['proxy'] = {}
+        config['proxy']['use_proxy'] = False
+        console.print("[cyan]ℹ️ Proxy usage disabled via CLI flag.[/cyan]")
 
     # Proxy Setup
     proxy_manager = None

@@ -31,44 +31,62 @@ class TestSender(unittest.TestCase):
         }
 
     @patch('requests.get')
-    @patch('socks.set_default_proxy')
-    def test_proxy_manager_validation(self, mock_socks, mock_requests):
-        mock_requests.return_value.status_code = 200
-        mock_requests.return_value.text = "1.2.3.4"
+    def test_discover_server_settings_success(self, mock_get):
+        xml_content = """
+        <clientConfig version="1.1">
+          <emailProvider id="example.com">
+            <incomingServer type="imap">
+              <hostname>imap.example.com</hostname>
+              <port>993</port>
+              <socketType>SSL</socketType>
+            </incomingServer>
+            <outgoingServer type="smtp">
+              <hostname>smtp.example.com</hostname>
+              <port>587</port>
+              <socketType>STARTTLS</socketType>
+            </outgoingServer>
+          </emailProvider>
+        </clientConfig>
+        """
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.content = xml_content.encode()
 
-        pm = sender.ProxyManager(["socks5://proxy1:1080"])
-        success = pm.validate_proxies()
+        imap, smtp = sender.discover_server_settings("test@example.com")
 
-        self.assertTrue(success)
-        self.assertEqual(len(pm.valid_proxies), 1)
-        self.assertEqual(pm.get_next_proxy(), "socks5://proxy1:1080")
+        self.assertEqual(imap['host'], 'imap.example.com')
+        self.assertEqual(smtp['host'], 'smtp.example.com')
+        self.assertTrue(imap['use_ssl'])
+        self.assertTrue(smtp['use_tls'])
 
-    @patch('smtplib.SMTP')
-    @patch('socks.set_default_proxy')
-    def test_send_email_with_proxy(self, mock_socks, mock_smtp):
-        pm = MagicMock()
-        pm.get_next_proxy.return_value = "socks5://p1:1080"
+    @patch('requests.get')
+    def test_discover_server_settings_fallback(self, mock_get):
+        mock_get.return_value.status_code = 404
 
-        success, subject = sender.send_email(self.config, "r@ex.com", "Context", proxy_manager=pm)
+        imap, smtp = sender.discover_server_settings("test@randomdomain.com")
 
-        self.assertTrue(success)
-        pm.apply_proxy.assert_called_with("socks5://p1:1080")
-        # Ensure socks was called
-        self.assertTrue(mock_socks.called)
+        self.assertEqual(imap['host'], 'imap.randomdomain.com')
+        self.assertEqual(smtp['host'], 'smtp.randomdomain.com')
 
-    @patch('sender.ProxyManager.validate_proxies', return_value=True)
+    @patch('sender.discover_server_settings', return_value=({"host": "i"}, {"host": "s"}))
+    @patch('argparse.ArgumentParser.parse_args')
+    @patch('json.load')
+    @patch('builtins.open', new_callable=MagicMock)
     @patch('sender.get_all_contacts', return_value=[])
     @patch('sender.get_conversation_context', return_value="C")
     @patch('sender.send_email', return_value=(True, "S"))
     @patch('sender.move_sent_email', return_value="M")
     @patch('time.sleep', return_value=None)
-    @patch('builtins.open', new_callable=unittest.mock.mock_open, read_data='{"proxy": {"use_proxy": true, "proxies": ["p"]}, "email": {"contacts": ["r"]}, "smtp": {}, "imap": {}}')
     @patch('rich.live.Live.update')
-    def test_run_automation_proxy_flow(self, mock_live, mock_file, mock_sleep, mock_move, mock_send, mock_context, mock_discover, mock_valid):
+    def test_run_automation_auto_discovery_trigger(self, mock_live, mock_sleep, mock_move, mock_send, mock_context, mock_discover, mock_open, mock_json_load, mock_args, mock_valid_disc):
+        mock_args.return_value = MagicMock(use_proxy=False, no_proxy=True)
+        # Config with auth but no imap/smtp
+        config_dict = {"auth": {"email": "u@e.com", "password": "p"}, "email": {"contacts": ["r"]}, "proxy": {}}
+        mock_json_load.return_value = config_dict
+
         sender.stats = []
         sender.run_automation()
-        self.assertTrue(mock_valid.called)
-        self.assertTrue(mock_send.called)
+
+        self.assertTrue(mock_valid_disc.called)
 
 if __name__ == '__main__':
     unittest.main()

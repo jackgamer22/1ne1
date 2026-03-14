@@ -1,4 +1,9 @@
 {
+    "auth": {
+        "email": "your_email@example.com",
+        "password": "your_password",
+        "auto_discovery": true
+    },
     "smtp": {
         "host": "smtp.example.com",
         "port": 587,
