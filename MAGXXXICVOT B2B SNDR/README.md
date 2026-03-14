@@ -14,20 +14,25 @@ An advanced SMTP mailing utility with automated IMAP post-processing, contact di
 - **SMTP/IMAP Automation**: Full lifecycle automation from discovery to archiving sent mail.
 
 ## Setup
-1. Copy `config.example.json` to `config.json`.
-2. Edit `config.json`:
-   - **Option A (Easy)**: Just fill in the `auth` section with your email and password.
-   - **Option B (Manual)**: Provide full `smtp` and `imap` server details.
-3. Proxy Configuration:
-   - Set `use_proxy` to `true`.
-   - Add your SOCKS5 proxies to the `proxies` list.
-4. Toggles:
-   - Set `auto_discover_contacts` to `true` to find new leads.
-   - Set `auto_draft_invite` to `true` to use the `invite_template`.
-5. Ensure you have Python 3 and the required libraries:
+### Windows
+1. Open the project folder.
+2. Double-click `setup.bat`. This will install all dependencies and create your `config.json` file.
+
+### Linux/macOS
+1. Ensure you have Python 3 installed.
+2. Install the required libraries:
    ```bash
    pip install rich PySocks requests defusedxml
    ```
+3. Copy `config.example.json` to `config.json`.
+
+## Configuration
+Edit `config.json`:
+- **Option A (Easy)**: Just fill in the `auth` section with your email and password, and set `auto_discovery` to `true`.
+- **Option B (Manual)**: Provide full `smtp` and `imap` server details.
+- **Toggles**:
+    - `auto_discover_contacts`: Set to `true` to find new leads in your inbox.
+    - `auto_draft_invite`: Set to `true` to use the `invite_template`.
 
 ## Usage
 Run the sender script:
@@ -38,15 +43,6 @@ python3 sender.py
 ### Command-Line Arguments
 - `--use-proxy`: Force enable proxy usage, overriding `config.json`.
 - `--no-proxy`: Force disable proxy usage, overriding `config.json`.
-
-## Configuration
-Key `config.json` sections:
-- `auth`: Your email credentials for auto-discovery.
-- `proxy`: Manage your proxy list and toggle.
-- `email`:
-    - `auto_discover_contacts`: Enable lead finding.
-    - `auto_draft_invite`: Enable contextual invite drafting.
-    - `invite_template`: Template for the personalized invitation.
 
 ## Disclaimer
 This project is for educational/fictional purposes.

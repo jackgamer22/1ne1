@@ -80,7 +80,7 @@ class TestSender(unittest.TestCase):
     def test_run_automation_auto_discovery_trigger(self, mock_live, mock_sleep, mock_move, mock_send, mock_context, mock_discover, mock_open, mock_json_load, mock_args, mock_valid_disc):
         mock_args.return_value = MagicMock(use_proxy=False, no_proxy=True)
         # Config with auth but no imap/smtp
-        config_dict = {"auth": {"email": "u@e.com", "password": "p"}, "email": {"contacts": ["r"]}, "proxy": {}}
+        config_dict = {"auth": {"email": "u@e.com", "password": "p", "auto_discovery": True}, "email": {"contacts": ["r"]}, "proxy": {}}
         mock_json_load.return_value = config_dict
 
         sender.stats = []
