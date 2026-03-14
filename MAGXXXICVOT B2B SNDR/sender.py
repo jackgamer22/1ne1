@@ -4,11 +4,13 @@ import json
 import time
 import os
 import mimetypes
+import re
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
+from email.utils import parseaddr
 
 from rich.console import Console
 from rich.table import Table
@@ -34,6 +36,36 @@ def get_stats_table():
     for row in stats:
         table.add_row(*row)
     return table
+
+def get_all_contacts(config):
+    imap_cfg = config['imap']
+    contacts = set()
+    try:
+        if imap_cfg.get('use_ssl'):
+            mail = imaplib.IMAP4_SSL(imap_cfg['host'], imap_cfg['port'])
+        else:
+            mail = imaplib.IMAP4(imap_cfg['host'], imap_cfg['port'])
+
+        mail.login(imap_cfg['user'], imap_cfg['password'])
+        mail.select('INBOX')
+
+        # Fetch all messages to find unique senders
+        result, data = mail.search(None, 'ALL')
+        if result == 'OK':
+            ids = data[0].split()
+            # Limit to last 50 for performance
+            for msg_id in ids[-50:]:
+                result, msg_data = mail.fetch(msg_id, '(BODY[HEADER.FIELDS (FROM)])')
+                if result == 'OK':
+                    from_header = msg_data[0][1].decode().strip()
+                    name, addr = parseaddr(from_header.replace('From:', '').strip())
+                    if addr and addr != imap_cfg['user']:
+                        contacts.add(addr)
+
+        mail.logout()
+    except Exception as e:
+        console.print(f"[red]Error discovering contacts: {e}[/red]")
+    return list(contacts)
 
 def move_sent_email(config, recipient, subject):
     imap_cfg = config['imap']
@@ -78,9 +110,8 @@ def get_conversation_context(config, recipient):
         mail.login(imap_cfg['user'], imap_cfg['password'])
         mail.select('INBOX')
 
-        # Search for messages from the recipient
         result, data = mail.search(None, f'FROM "{recipient}"')
-        context = "our collaboration" # Default context
+        context = "our collaboration"
 
         if result == 'OK' and data[0]:
             latest_id = data[0].split()[-1]
@@ -89,6 +120,8 @@ def get_conversation_context(config, recipient):
                 subject_header = msg_data[0][1].decode().strip()
                 if subject_header.startswith("Subject:"):
                     context = subject_header[8:].strip()
+                    # Clean Re: Fwd: etc
+                    context = re.sub(r'^(Re|Fwd|Aw|Wg):\s*', '', context, flags=re.IGNORECASE)
 
         mail.logout()
         return context
@@ -100,7 +133,11 @@ def send_email(config, recipient, context):
     email_cfg = config['email']
 
     subject = email_cfg['subject'].replace('{{ context }}', context)
-    body_text = email_cfg['body'].replace('{{ context }}', context)
+
+    if email_cfg.get('auto_draft_invite'):
+        body_text = email_cfg.get('invite_template', '').replace('{{ context }}', context)
+    else:
+        body_text = email_cfg['body'].replace('{{ context }}', context)
 
     msg = MIMEMultipart()
     msg['From'] = smtp_cfg['user']
@@ -130,7 +167,6 @@ def send_email(config, recipient, context):
         full_body = f"{body_text}\n\n--\n{email_cfg.get('signature', '')}"
         msg.attach(MIMEText(full_body, 'plain'))
 
-    # Attachments
     for file_path in email_cfg.get('attachments', []):
         if os.path.exists(file_path):
             ctype, encoding = mimetypes.guess_type(file_path)
@@ -172,16 +208,23 @@ def run_automation():
         console.print("[bold red]config.json not found! 😱[/bold red]")
         return
 
-    contacts = config['email'].get('contacts', [])
+    email_cfg = config['email']
+    contacts = email_cfg.get('contacts', [])
+
+    if email_cfg.get('auto_discover_contacts'):
+        console.print("🔍 Discovering contacts from INBOX...")
+        discovered = get_all_contacts(config)
+        contacts = list(set(contacts) | set(discovered))
+        console.print(f"✅ Found {len(discovered)} new contacts.")
+
+    if not contacts:
+        console.print("[bold yellow]No contacts found to process.[/bold yellow]")
+        return
 
     with Live(get_stats_table(), refresh_per_second=4) as live:
         for recipient in contacts:
             current_time = datetime.now().strftime("%H:%M:%S")
-
-            # 1. Fetch Context
             context = get_conversation_context(config, recipient)
-
-            # 2. Send Email
             success, result_info = send_email(config, recipient, context)
 
             if success:
@@ -189,10 +232,7 @@ def run_automation():
                 status = "Sent. Waiting..."
                 stats.append([current_time, recipient, subject, status])
                 live.update(get_stats_table())
-
                 time.sleep(5)
-
-                # 3. Move Email
                 move_status = move_sent_email(config, recipient, subject)
                 stats[-1][3] = f"Sent & {move_status}"
             else:

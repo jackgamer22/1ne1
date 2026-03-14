@@ -1,23 +1,24 @@
 # MAGXXXICVOT B2B SNDR
 
-An advanced SMTP mailing utility with automated IMAP post-processing and a beautiful real-time dashboard.
+An advanced SMTP mailing utility with automated IMAP post-processing, contact discovery, and AI-inspired auto-drafting.
 
 ## Features
-- **Real-time Dashboard**: A beautiful tabular display using `rich` to track send status, recipients, and timing.
-- **Auto-Drafting (Contextual)**: Automatically fetches the last conversation subject from IMAP to personalize your emails.
+- **Contact Auto-Discovery**: Automatically scans your IMAP INBOX to find people you've recently conversed with.
+- **Auto-Drafting Invites**: Generates "convincing" invite messages based on the context of your previous conversation.
+- **Contextual Personalization**: Cleans conversation subjects (removing Re:/Fwd:) and injects them into templates via `{{ context }}`.
+- **Real-time Dashboard**: A beautiful tabular display using `rich` to track send status and recipients.
 - **HTML/Plaintext Toggle**: Easily switch between rich HTML and clean plaintext formats.
 - **Attachments**: Support for PDF, SVG, and Image attachments.
-- **Personalized Placeholders**: Use `{{ context }}` in your subject or body to inject conversation-specific data.
-- **SMTP Integration**: Sends emails using standard SMTP servers.
-- **IMAP Automation**: Automatically locates sent emails and moves them to an Archive folder.
+- **SMTP/IMAP Automation**: Full lifecycle automation from discovery to archiving sent mail.
 
 ## Setup
 1. Copy `config.example.json` to `config.json`.
 2. Edit `config.json` with your SMTP and IMAP credentials.
-3. Add your contacts to the `contacts` list.
-4. Set `use_html` to `true` or `false` as desired.
-5. List any file paths in `attachments` you wish to send.
-6. Ensure you have Python 3 and the `rich` library installed:
+3. Toggles:
+   - Set `auto_discover_contacts` to `true` to find new leads in your inbox.
+   - Set `auto_draft_invite` to `true` to use the `invite_template` for personalized invites.
+4. Customize your `invite_template` using `{{ context }}`.
+5. Ensure you have Python 3 and the `rich` library installed:
    ```bash
    pip install rich
    ```
@@ -29,17 +30,11 @@ python3 sender.py
 ```
 
 ## Configuration
-The `config.json` file contains:
-- `smtp`: Connection details for outgoing mail.
-- `imap`: Connection details for incoming mail (to fetch context and move sent items).
-- `email`:
-    - `contacts`: List of recipient emails.
-    - `subject`: Use `{{ context }}` for personalization.
-    - `body`: Use `{{ context }}` for personalization.
-    - `use_html`: Toggle between HTML and Plaintext.
-    - `logo_base64`: Base64 string of your logo image (HTML only).
-    - `signature`: Your professional box signature.
-    - `attachments`: List of local file paths to attach.
+Key `config.json` fields:
+- `auto_discover_contacts`: Enable/disable automatic lead finding.
+- `auto_draft_invite`: Enable/disable contextual invite drafting.
+- `invite_template`: Template for the personalized invitation.
+- `contacts`: Manual list of recipient emails (merged with discovered ones).
 
 ## Disclaimer
 This project is for educational/fictional purposes.

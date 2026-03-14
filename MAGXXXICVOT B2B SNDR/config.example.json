@@ -15,18 +15,17 @@
         "archive_folder": "Archive"
     },
     "email": {
-        "contacts": [
-            "recipient1@example.com",
-            "recipient2@example.com"
-        ],
-        "subject": "B2B Inquiry regarding {{ context }}",
-        "body": "Hello,\n\nI am reaching out regarding our previous conversation about {{ context }}.\n\nBest regards,",
+        "auto_discover_contacts": true,
+        "auto_draft_invite": true,
+        "contacts": [],
+        "subject": "Follow up: {{ context }}",
+        "body": "Hello,\n\nI was thinking about {{ context }} and wanted to share this invite with you.\n\nBest regards,",
+        "invite_template": "Following our discussion about {{ context }}, I've prepared a special invitation for you. Please check the attached file for more details.",
         "use_html": true,
         "logo_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
         "signature": "MAGXXXICVOT B2B SNDR Box Signature",
         "attachments": [
-            "proposal.pdf",
-            "logo.svg"
+            "invite.pdf"
         ]
     }
 }
