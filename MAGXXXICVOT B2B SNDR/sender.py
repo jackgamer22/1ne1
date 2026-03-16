@@ -25,6 +25,9 @@ from playwright.async_api import async_playwright
 from rich.console import Console
 from rich.table import Table
 from rich.live import Live
+from rich.prompt import Prompt, Confirm
+from rich.panel import Panel
+from rich import box
 
 console = Console()
 
@@ -208,11 +211,17 @@ def discover_server_settings(email):
     }
 
 def get_stats_table():
-    table = Table(title="MAGXXICVOT B2B SNDR Dashboard")
-    table.add_column("Time", style="cyan")
-    table.add_column("Recipient", style="magenta")
-    table.add_column("Subject", style="green")
-    table.add_column("Status", style="bold yellow")
+    table = Table(
+        title="[bold blue]MAGXXXICVOT B2B SNDR Real-Time Dashboard[/bold blue]",
+        box=box.DOUBLE_EDGE,
+        header_style="bold white on blue",
+        border_style="blue",
+        expand=True
+    )
+    table.add_column("🕒 Time", style="cyan", justify="center")
+    table.add_column("👤 Recipient", style="magenta")
+    table.add_column("📧 Subject", style="green")
+    table.add_column("📡 Status", style="bold yellow")
 
     for row in stats:
         table.add_row(*row)
@@ -422,10 +431,51 @@ def send_email(config, recipient, context, proxy_manager=None):
     finally:
         socks.set_default_proxy()
 
+def interactive_settings(config):
+    console.print(Panel.fit(
+        "[bold cyan]🛠️  MAGXXXICVOT B2B SNDR - CONFIGURATION DASHBOARD[/bold cyan]",
+        border_style="cyan",
+        box=box.ROUNDED
+    ))
+
+    if 'auth' not in config:
+        config['auth'] = {}
+
+    console.print("\n[bold yellow]🔑 Authentication Settings[/bold yellow]")
+    auth = config['auth']
+    auth['email'] = Prompt.ask("[bold blue]Enter your email[/bold blue]", default=auth.get('email', ''))
+    auth['password'] = Prompt.ask("[bold blue]Enter your password[/bold blue]", default=auth.get('password', ''), password=True)
+    auth['auto_discovery'] = Confirm.ask("[bold green]Enable server auto-discovery?[/bold green]", default=auth.get('auto_discovery', True))
+
+    console.print("\n[bold yellow]🌐 Network Settings[/bold yellow]")
+    if 'proxy' not in config:
+        config['proxy'] = {}
+    config['proxy']['use_proxy'] = Confirm.ask("[bold green]Use proxy rotation?[/bold green]", default=config['proxy'].get('use_proxy', False))
+
+    console.print("\n[bold yellow]📧 Automation Settings[/bold yellow]")
+    if 'email' not in config:
+        config['email'] = {}
+    email = config['email']
+    email['auto_discover_contacts'] = Confirm.ask("[bold green]Auto-discover contacts from INBOX?[/bold green]", default=email.get('auto_discover_contacts', True))
+    email['auto_draft_invite'] = Confirm.ask("[bold green]Enable contextual auto-drafting?[/bold green]", default=email.get('auto_draft_invite', True))
+    email['send_attachments'] = Confirm.ask("[bold green]Send attachments?[/bold green]", default=email.get('send_attachments', True))
+
+    console.print("")
+    save = Confirm.ask("[bold red]Save these settings to config.json?[/bold red]", default=False)
+    if save:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        config_path = os.path.join(script_dir, 'config.json')
+        with open(config_path, 'w') as f:
+            json.dump(config, f, indent=4)
+        console.print("[green]✅ Settings saved![/green]")
+
+    return config
+
 def run_automation():
-    parser = argparse.ArgumentParser(description="MAGXXICVOT B2B SNDR Automation")
+    parser = argparse.ArgumentParser(description="MAGXXXICVOT B2B SNDR Automation")
     parser.add_argument('--use-proxy', action='store_true', help='Force enable proxy usage')
     parser.add_argument('--no-proxy', action='store_true', help='Force disable proxy usage')
+    parser.add_argument('--setup', action='store_true', help='Run interactive setup before starting')
     args = parser.parse_args()
 
     console.print(BANNER, style="bold blue")
@@ -437,8 +487,11 @@ def run_automation():
         with open(config_path, 'r') as f:
             config = json.load(f)
     except FileNotFoundError:
-        console.print("[bold red]config.json not found! 😱[/bold red]")
-        return
+        console.print("[yellow]⚠️ config.json not found. Starting interactive setup...[/yellow]")
+        config = interactive_settings({})
+
+    if args.setup:
+        config = interactive_settings(config)
 
     # Auto-discovery
     auth_cfg = config.get('auth', {})
