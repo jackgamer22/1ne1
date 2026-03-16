@@ -4,11 +4,9 @@ import json
 import time
 import argparse
 import os
+import sys
 import mimetypes
 import re
-import socks
-import socket
-import requests
 import asyncio
 import base64
 from datetime import datetime
@@ -18,16 +16,35 @@ from email.mime.base import MIMEBase
 from email import encoders
 from email.utils import parseaddr
 from urllib.parse import urlparse
-from defusedxml import ElementTree as ET
-import htmlmin
 
-from playwright.async_api import async_playwright
-from rich.console import Console
-from rich.table import Table
-from rich.live import Live
-from rich.prompt import Prompt, Confirm
-from rich.panel import Panel
-from rich import box
+# Dependency Check
+MISSING_DEPS = []
+try: import socks
+except ImportError: MISSING_DEPS.append("PySocks")
+try: import requests
+except ImportError: MISSING_DEPS.append("requests")
+try: from defusedxml import ElementTree as ET
+except ImportError: MISSING_DEPS.append("defusedxml")
+try: import htmlmin
+except ImportError: MISSING_DEPS.append("htmlmin")
+try: from playwright.async_api import async_playwright
+except ImportError: MISSING_DEPS.append("playwright")
+try:
+    from rich.console import Console
+    from rich.table import Table
+    from rich.live import Live
+    from rich.prompt import Prompt, Confirm
+    from rich.panel import Panel
+    from rich import box
+except ImportError:
+    MISSING_DEPS.append("rich")
+
+if MISSING_DEPS:
+    print(f"\n❌ FATAL ERROR: Missing dependencies: {', '.join(MISSING_DEPS)}")
+    print("👉 Please run 'setup.bat' (Windows) or 'pip install rich PySocks requests defusedxml playwright htmlmin' to fix this.")
+    sys.exit(1)
+
+import socket
 
 console = Console()
 
@@ -438,27 +455,35 @@ def interactive_settings(config):
         box=box.ROUNDED
     ))
 
-    if 'auth' not in config:
-        config['auth'] = {}
+    if 'auth' not in config: config['auth'] = {}
+    if 'proxy' not in config: config['proxy'] = {}
+    if 'email' not in config: config['email'] = {}
+    if 'smtp' not in config: config['smtp'] = {}
+    if 'imap' not in config: config['imap'] = {}
 
     console.print("\n[bold yellow]🔑 Authentication Settings[/bold yellow]")
-    auth = config['auth']
-    auth['email'] = Prompt.ask("[bold blue]Enter your email[/bold blue]", default=auth.get('email', ''))
-    auth['password'] = Prompt.ask("[bold blue]Enter your password[/bold blue]", default=auth.get('password', ''), password=True)
-    auth['auto_discovery'] = Confirm.ask("[bold green]Enable server auto-discovery?[/bold green]", default=auth.get('auto_discovery', True))
+    config['auth']['email'] = Prompt.ask("[bold blue]Enter your email[/bold blue]", default=config['auth'].get('email', ''))
+    config['auth']['password'] = Prompt.ask("[bold blue]Enter your password[/bold blue]", default=config['auth'].get('password', ''), password=True)
+    config['auth']['auto_discovery'] = Confirm.ask("[bold green]Enable server auto-discovery?[/bold green]", default=config['auth'].get('auto_discovery', True))
+
+    if not config['auth']['auto_discovery']:
+        console.print("\n[bold yellow]🖥️  Manual Server Settings[/bold yellow]")
+        config['smtp']['host'] = Prompt.ask("  SMTP Host", default=config['smtp'].get('host', ''))
+        config['smtp']['port'] = int(Prompt.ask("  SMTP Port", default=str(config['smtp'].get('port', 587))))
+        config['imap']['host'] = Prompt.ask("  IMAP Host", default=config['imap'].get('host', ''))
+        config['imap']['port'] = int(Prompt.ask("  IMAP Port", default=str(config['imap'].get('port', 993))))
 
     console.print("\n[bold yellow]🌐 Network Settings[/bold yellow]")
-    if 'proxy' not in config:
-        config['proxy'] = {}
     config['proxy']['use_proxy'] = Confirm.ask("[bold green]Use proxy rotation?[/bold green]", default=config['proxy'].get('use_proxy', False))
 
     console.print("\n[bold yellow]📧 Automation Settings[/bold yellow]")
-    if 'email' not in config:
-        config['email'] = {}
-    email = config['email']
-    email['auto_discover_contacts'] = Confirm.ask("[bold green]Auto-discover contacts from INBOX?[/bold green]", default=email.get('auto_discover_contacts', True))
-    email['auto_draft_invite'] = Confirm.ask("[bold green]Enable contextual auto-drafting?[/bold green]", default=email.get('auto_draft_invite', True))
-    email['send_attachments'] = Confirm.ask("[bold green]Send attachments?[/bold green]", default=email.get('send_attachments', True))
+    config['email']['automated_mode'] = Confirm.ask("[bold green]Enable fully automated mode (no confirmation)?[/bold green]", default=config['email'].get('automated_mode', True))
+    config['email']['auto_discover_contacts'] = Confirm.ask("[bold green]Auto-discover contacts from INBOX?[/bold green]", default=config['email'].get('auto_discover_contacts', True))
+    config['email']['auto_draft_invite'] = Confirm.ask("[bold green]Enable contextual auto-drafting?[/bold green]", default=config['email'].get('auto_draft_invite', True))
+    config['email']['send_attachments'] = Confirm.ask("[bold green]Send attachments?[/bold green]", default=config['email'].get('send_attachments', True))
+
+    if config['email']['send_attachments']:
+        config['email']['convert_html_attachments'] = Confirm.ask("  Convert HTML attachments?", default=config['email'].get('convert_html_attachments', True))
 
     console.print("")
     save = Confirm.ask("[bold red]Save these settings to config.json?[/bold red]", default=False)
@@ -544,8 +569,19 @@ def run_automation():
         console.print("[bold yellow]No contacts found to process.[/bold yellow]")
         return
 
+    automated = email_cfg.get('automated_mode', True)
+
     with Live(get_stats_table(), refresh_per_second=4) as live:
         for recipient in contacts:
+            if not automated:
+                live.stop()
+                console.print(f"\n[bold yellow]❓ Ready to process {recipient}?[/bold yellow]")
+                if not Confirm.ask("Proceed?"):
+                    stats.append([datetime.now().strftime("%H:%M:%S"), recipient, "N/A", "Skipped by user"])
+                    live.start()
+                    continue
+                live.start()
+
             current_time = datetime.now().strftime("%H:%M:%S")
             context = get_conversation_context(config, recipient, proxy_manager)
             success, result_info = send_email(config, recipient, context, proxy_manager)
