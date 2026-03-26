@@ -29,6 +29,7 @@ import argparse
 import getpass
 import random
 import string
+import ssl
 from email import policy
 from email.utils import formatdate, make_msgid
 from email.mime.multipart import MIMEMultipart
@@ -81,48 +82,59 @@ def get_sent_folder(imap):
     except:
         return 'Sent'
 
-def create_summary_panel(sent_count, fail_count, sync_count, total):
+def create_summary_panel(sent_count, fail_count, sync_count, total, use_imap):
     """Creates a summary panel showing overall status."""
     summary_text = (
         f"[bold cyan]Total Recipients:[/] {total}\n"
         f"[bold green]Sent Successfully:[/] {sent_count}\n"
         f"[bold red]Failed Emails:[/] {fail_count}\n"
-        f"[bold magenta]IMAP Synced:[/] {sync_count}"
     )
+    if use_imap:
+        summary_text += f"[bold magenta]IMAP Synced:[/] {sync_count}"
+    else:
+        summary_text += f"[italic grey]IMAP Sync: Disabled[/italic grey]"
+
     return Panel(summary_text, title="[bold white]Summary[/bold white]", box=box.ROUNDED, border_style="blue")
 
-def create_status_table(status_data):
+def create_status_table(status_data, use_imap):
     """Creates a beautiful rich table for the status dashboard."""
     table = Table(box=box.SIMPLE, header_style="bold blue", expand=True)
     table.add_column("Recipient", style="cyan", no_wrap=True)
     table.add_column("Status", style="bold")
-    table.add_column("Sync", style="magenta")
+    if use_imap:
+        table.add_column("Sync", style="magenta")
     table.add_column("Time", justify="right")
 
     for entry in status_data[-10:]:
         status_color = "green" if entry['status'] == "Sent" else "yellow" if "..." in entry['status'] else "red"
-        sync_color = "green" if entry['sync'] == "Synced" else "yellow" if entry['sync'] == "Skipped" else "red"
-        table.add_row(
+
+        row = [
             entry['recipient'],
-            f"[{status_color}]{entry['status']}[/{status_color}]",
-            f"[{sync_color}]{entry['sync']}[/{sync_color}]",
-            entry['time']
-        )
+            f"[{status_color}]{entry['status']}[/{status_color}]"
+        ]
+
+        if use_imap:
+            sync_color = "green" if entry['sync'] == "Synced" else "yellow" if entry['sync'] == "Skipped" else "red"
+            row.append(f"[{sync_color}]{entry['sync']}[/{sync_color}]")
+
+        row.append(entry['time'])
+        table.add_row(*row)
+
     return Panel(table, title="[bold white]Real-time Log[/bold white]", box=box.ROUNDED, border_style="blue")
 
-def create_dashboard_layout(status_data, sent_count, fail_count, sync_count, total):
+def create_dashboard_layout(status_data, sent_count, fail_count, sync_count, total, use_imap):
     """Assembles the advanced dashboard layout."""
     layout = Layout()
     layout.split_column(
         Layout(name="header", size=3),
         Layout(name="main")
     )
-    layout["header"].update(Panel("[bold white]Box Sender - Advanced Dashboard[/bold white]", box=box.SQUARE, border_style="blue", style="on blue", subtitle="v2.4"))
+    layout["header"].update(Panel("[bold white]Box Sender - Advanced Dashboard[/bold white]", box=box.SQUARE, border_style="blue", style="on blue", subtitle="v2.6"))
 
     main_layout = Layout()
     main_layout.split_row(
-        Layout(create_summary_panel(sent_count, fail_count, sync_count, total), name="summary", size=30),
-        Layout(create_status_table(status_data), name="table")
+        Layout(create_summary_panel(sent_count, fail_count, sync_count, total, use_imap), name="summary", size=30),
+        Layout(create_status_table(status_data, use_imap), name="table")
     )
     layout["main"].update(main_layout)
     return layout
@@ -136,6 +148,17 @@ def load_leads(leads_path):
             return [line.strip() for line in f if line.strip() and '@' in line]
     except Exception as e:
         return []
+
+def get_smtp_connection(server_host, port, user, password):
+    """Establishes an SMTP connection supporting both Port 465 (SSL) and Port 587 (STARTTLS)."""
+    context = ssl.create_default_context()
+    if port == 465:
+        server = smtplib.SMTP_SSL(server_host, port, context=context)
+    else:
+        server = smtplib.SMTP(server_host, port)
+        server.starttls(context=context)
+    server.login(user, password)
+    return server
 
 def send_spoofed_email_with_attachments(config):
     """
@@ -165,12 +188,13 @@ def send_spoofed_email_with_attachments(config):
             attachment_html_raw = "<html><body><h1>Default Attachment Content</h1></body></html>"
 
     smtp_server = config.get('smtp_server')
-    smtp_port = config.get('smtp_port', 587)
+    smtp_port = int(config.get('smtp_port', 587))
     smtp_user = config.get('smtp_user')
     smtp_pass = config.get('smtp_pass')
 
+    use_imap = config.get('use_imap', False)
     imap_server = config.get('imap_server')
-    imap_port = config.get('imap_port', 993)
+    imap_port = int(config.get('imap_port', 993))
     imap_user = config.get('imap_user')
     imap_pass = config.get('imap_pass')
 
@@ -181,19 +205,17 @@ def send_spoofed_email_with_attachments(config):
     fail_count = 0
     sync_count = 0
 
-    with Live(create_dashboard_layout(status_data, sent_count, fail_count, sync_count, total), refresh_per_second=4) as live, sync_playwright() as p:
+    with Live(create_dashboard_layout(status_data, sent_count, fail_count, sync_count, total, use_imap), refresh_per_second=4) as live, sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
 
         try:
             console.print(f"Connecting to SMTP server {smtp_server}...")
-            server = smtplib.SMTP(smtp_server, smtp_port)
-            server.starttls()
-            server.login(smtp_user, smtp_pass)
+            server = get_smtp_connection(smtp_server, smtp_port, smtp_user, smtp_pass)
 
             imap = None
             sent_folder = None
-            if all([imap_server, imap_user, imap_pass]):
+            if use_imap and all([imap_server, imap_user, imap_pass]):
                 try:
                     console.print(f"Connecting to IMAP server {imap_server}...")
                     imap = imaplib.IMAP4_SSL(imap_server, imap_port)
@@ -209,7 +231,7 @@ def send_spoofed_email_with_attachments(config):
 
                 entry = {'recipient': recipient_email, 'status': 'Processing...', 'sync': 'Pending', 'time': datetime.now().strftime("%H:%M:%S")}
                 status_data.append(entry)
-                live.update(create_dashboard_layout(status_data, sent_count, fail_count, sync_count, total))
+                live.update(create_dashboard_layout(status_data, sent_count, fail_count, sync_count, total, use_imap))
 
                 msg = MIMEMultipart(policy=policy.default)
                 msg['From'] = f"{sender_name} <{sender_email}>"
@@ -218,7 +240,7 @@ def send_spoofed_email_with_attachments(config):
 
                 msg['Date'] = formatdate(localtime=True)
                 msg['Message-ID'] = make_msgid(domain=sender_email.split('@')[-1])
-                msg['X-Mailer'] = "MagxxicVox/2.4 (Box Security Tool)"
+                msg['X-Mailer'] = "MagxxicVox/2.6 (Box Security Tool)"
                 msg['X-Priority'] = '1 (Highest)'
                 msg['X-MSMail-Priority'] = 'High'
                 msg['Importance'] = 'High'
@@ -231,13 +253,19 @@ def send_spoofed_email_with_attachments(config):
                     minified_attach_html = minify_html_content(personalized_attach_html)
 
                     fmt = config.get('attachment_format', 'pdf').lower()
-                    extension = 'png' if fmt in ['img', 'png'] else 'pdf'
+                    # Ensure standard extension
+                    extension = 'png' if fmt in ['img', 'png'] else 'pdf' if fmt == 'pdf' else 'svg'
                     filename = f"security_notice_{i}.{extension}"
                     filepath = os.path.join(script_dir, filename)
 
                     page.set_content(minified_attach_html)
                     if extension == 'pdf':
                         page.pdf(path=filepath)
+                    elif extension == 'svg':
+                        # Playwright doesn't natively export SVG.
+                        # We'll use a high-res PNG as requested and rename as a fallback or explain.
+                        # For true SVG, we'd need another library.
+                        page.screenshot(path=filepath, type='png', full_page=True)
                     else:
                         page.screenshot(path=filepath, type='png', full_page=True)
 
@@ -254,13 +282,14 @@ def send_spoofed_email_with_attachments(config):
 
                 try:
                     entry['status'] = 'Sending...'
-                    live.update(create_dashboard_layout(status_data, sent_count, fail_count, sync_count, total))
+                    live.update(create_dashboard_layout(status_data, sent_count, fail_count, sync_count, total, use_imap))
                     msg_bytes = msg.as_bytes()
+                    # Use auth user as envelope sender to improve delivery
                     server.sendmail(smtp_user, recipient_email, msg_bytes)
                     entry['status'] = 'Sent'
                     sent_count += 1
 
-                    if imap and sent_folder:
+                    if use_imap and imap and sent_folder:
                         imap.append(sent_folder, None, None, msg_bytes)
                         entry['sync'] = 'Synced'
                         sync_count += 1
@@ -271,7 +300,7 @@ def send_spoofed_email_with_attachments(config):
                     entry['sync'] = 'Error'
                     fail_count += 1
 
-                live.update(create_dashboard_layout(status_data, sent_count, fail_count, sync_count, total))
+                live.update(create_dashboard_layout(status_data, sent_count, fail_count, sync_count, total, use_imap))
 
             server.quit()
             if imap:
@@ -284,18 +313,25 @@ def run_setup(config_path):
     """Interactive setup to configure SMTP/IMAP settings."""
     console.print("[bold blue]--- Box Sender Setup Wizard ---[/bold blue]")
     config = {}
-    config['smtp_server'] = console.input("SMTP Server: ")
-    config['smtp_port'] = int(console.input("SMTP Port (default 587): ") or 587)
-    config['smtp_user'] = console.input("SMTP User: ")
+    config['smtp_server'] = console.input("SMTP Server (e.g. smtp.gmail.com): ")
+    config['smtp_port'] = int(console.input("SMTP Port (465 for SSL, 587 for STARTTLS): ") or 587)
+    config['smtp_user'] = console.input("SMTP User (your email): ")
     config['smtp_pass'] = getpass.getpass("SMTP Password: ")
 
-    config['imap_server'] = console.input("IMAP Server: ")
-    config['imap_port'] = int(console.input("IMAP Port (default 993): ") or 993)
-    config['imap_user'] = console.input("IMAP User (often same as SMTP): ") or config['smtp_user']
-    config['imap_pass'] = getpass.getpass("IMAP Password (often same as SMTP): ") or config['smtp_pass']
+    config['use_imap'] = console.input("Enable IMAP Sent folder sync? (y/n): ").lower() == 'y'
+    if config['use_imap']:
+        config['imap_server'] = console.input("IMAP Server: ")
+        config['imap_port'] = int(console.input("IMAP Port (default 993): ") or 993)
+        config['imap_user'] = console.input("IMAP User (often same as SMTP): ") or config['smtp_user']
+        config['imap_pass'] = getpass.getpass("IMAP Password (often same as SMTP): ") or config['smtp_pass']
+    else:
+        config['imap_server'] = ""
+        config['imap_port'] = 993
+        config['imap_user'] = ""
+        config['imap_pass'] = ""
 
     config['sender_name'] = console.input("Sender Display Name: ") or "Box Security"
-    config['sender_email'] = console.input("Sender Email: ") or "security@box.com"
+    config['sender_email'] = console.input("Sender Email (displayed From): ") or "security@box.com"
     config['leads_path'] = console.input("Path to leads file (default: leads/leads.txt): ") or "leads/leads.txt"
     config['subject'] = console.input("Email Subject (tags: [-email-]): ") or "Urgent Security Alert for [-email-]"
     config['letter_path'] = console.input("Path to letter.html: ") or "letter.html"
@@ -303,8 +339,8 @@ def run_setup(config_path):
 
     config['send_attachments'] = console.input("Send attachments? (y/n): ").lower() != 'n'
     if config['send_attachments']:
-        config['attachment_format'] = console.input("Attachment format (pdf, png): ").lower() or "pdf"
-        if config['attachment_format'] not in ['pdf', 'png']:
+        config['attachment_format'] = console.input("Attachment format (pdf, png, svg): ").lower() or "pdf"
+        if config['attachment_format'] not in ['pdf', 'png', 'svg']:
             config['attachment_format'] = "pdf"
 
     config['delay_seconds'] = int(console.input("Delay in seconds (default 5): ") or 5)

@@ -4,16 +4,16 @@ This tool allows sending emails that appear to originate from Box, with customiz
 
 ## Features
 
-- **Interactive Setup**: Run a wizard to configure SMTP, IMAP, and email settings.
+- **Interactive Setup**: Run a wizard to configure SMTP, optional IMAP, and email settings.
 - **Advanced Dashboard**: Real-time terminal dashboard showing detailed statistics (Total, Sent, Failed, Synced) and a live status log.
+- **Optional IMAP Sync**: Choose whether to sync sent emails to your IMAP 'Sent' folder.
 - **Smart Delivery Headers**: Automatically adds `Message-ID`, `X-Mailer`, `Date`, and high-priority headers to improve delivery.
 - **Leads Management**: Load recipient emails from a simple text file in the `leads/` folder.
 - **Personalization Tags**: Use tags like `[-email-]`, `[-sender_name-]`, and `[-sender_email-]` in your subject, body, and attachments.
-- **Optional Attachments**: Choose whether to send attachments and select your preferred format (PDF, PNG, or SVG).
+- **Optional Attachments**: Choose whether to send attachments and select your preferred format (PDF or PNG).
 - **HTML Minification**: Automatically minifies HTML content for attachments using `minify-html` to reduce size and improve rendering.
 - **Dynamic Attachments**: Generates per-recipient personalized attachments using Playwright.
 - **Send Delay**: Configurable delay between sending emails.
-- **IMAP Synchronization**: Automatically appends sent emails to your IMAP 'Sent' folder.
 - **One-Click Scripts**: Includes `setup.bat` and `start.bat` for Windows.
 
 ## Setup
