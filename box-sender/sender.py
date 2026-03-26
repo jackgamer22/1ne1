@@ -5,7 +5,11 @@ import json
 import time
 import argparse
 import getpass
+import random
+import string
+import htmlmin
 from email import policy
+from email.utils import formatdate, make_msgid
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
@@ -19,34 +23,24 @@ from datetime import datetime
 
 console = Console()
 
-def convert_html_to_pdf(html_content, output_filename):
-    """Converts HTML content to a PDF file using Playwright."""
+def minify_html(html_content):
+    """Minifies the provided HTML content."""
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.set_content(html_content)
-            page.pdf(path=output_filename)
-            browser.close()
-        return True
+        return htmlmin.minify(html_content, remove_empty_space=True, remove_all_empty_space=True)
     except Exception as e:
-        console.print(f"[red]Error converting HTML to PDF: {e}[/red]")
-        return False
+        console.print(f"[yellow]HTML minification failed: {e}. Using original HTML.[/yellow]")
+        return html_content
 
-def convert_html_to_image(html_content, output_filename, img_format='png'):
-    """Converts HTML content to an image file using Playwright."""
-    try:
-        playwright_format = 'png' if img_format.lower() == 'png' else 'jpeg'
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.set_content(html_content)
-            page.screenshot(path=output_filename, type=playwright_format)
-            browser.close()
-        return True
-    except Exception as e:
-        console.print(f"[red]Error converting HTML to Image: {e}[/red]")
-        return False
+def personalize_content(content, recipient_email, config):
+    """Replaces personalization tags in the content."""
+    replacements = {
+        "[-email-]": recipient_email,
+        "[-sender_name-]": config.get('sender_name', 'Box Security'),
+        "[-sender_email-]": config.get('sender_email', 'security@box.com')
+    }
+    for tag, value in replacements.items():
+        content = content.replace(tag, value)
+    return content
 
 def get_sent_folder(imap):
     """Detects the Sent folder name in an IMAP account."""
@@ -80,21 +74,43 @@ def create_status_table(status_data):
         )
     return table
 
-def send_spoofed_email_with_attachments(config, attachments):
+def load_leads(leads_path):
+    """Loads email addresses from a leads text file."""
+    if not leads_path or not os.path.exists(leads_path):
+        return []
+    try:
+        with open(leads_path, 'r', encoding='utf-8') as f:
+            return [line.strip() for line in f if line.strip() and '@' in line]
+    except Exception as e:
+        console.print(f"[red]Error loading leads: {e}[/red]")
+        return []
+
+def send_spoofed_email_with_attachments(config):
     """
-    Sends an email appearing to originate from Box, with a custom sender name and attachments.
+    Sends an email appearing to originate from Box, with smart headers and optional attachments.
+    Reuses browser and connections for maximum performance.
     """
     sender_name = config.get('sender_name')
     sender_email = config.get('sender_email')
     recipient_emails = config.get('recipient_emails', [])
     subject = config.get('subject')
 
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     letter_path = config.get('letter_path')
     if letter_path and os.path.exists(letter_path):
         with open(letter_path, 'r', encoding='utf-8') as f:
-            body_html = f.read()
+            letter_html_raw = f.read()
     else:
-        body_html = config.get('body', "Default body content")
+        letter_html_raw = config.get('body', "Default body content")
+
+    attachment_html_raw = ""
+    if config.get('send_attachments', True):
+        attachment_html_path = config.get('attachment_html_path')
+        if attachment_html_path and os.path.exists(attachment_html_path):
+            with open(attachment_html_path, 'r', encoding='utf-8') as f:
+                attachment_html_raw = f.read()
+        else:
+            attachment_html_raw = "<html><body><h1>Default Attachment Content</h1></body></html>"
 
     smtp_server = config.get('smtp_server')
     smtp_port = config.get('smtp_port', 587)
@@ -109,7 +125,10 @@ def send_spoofed_email_with_attachments(config, attachments):
     delay = config.get('delay_seconds', 0)
     status_data = []
 
-    with Live(create_status_table(status_data), refresh_per_second=4) as live:
+    with Live(create_status_table(status_data), refresh_per_second=4) as live, sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
         try:
             console.print(f"Connecting to SMTP server {smtp_server}...")
             server = smtplib.SMTP(smtp_server, smtp_port)
@@ -132,13 +151,39 @@ def send_spoofed_email_with_attachments(config, attachments):
                 if i > 0 and delay > 0:
                     time.sleep(delay)
 
+                entry = {'recipient': recipient_email, 'status': 'Processing...', 'sync': 'Pending', 'time': datetime.now().strftime("%H:%M:%S")}
+                status_data.append(entry)
+                live.update(create_status_table(status_data))
+
                 msg = MIMEMultipart(policy=policy.default)
                 msg['From'] = f"{sender_name} <{sender_email}>"
                 msg['To'] = recipient_email
-                msg['Subject'] = subject
-                msg.attach(MIMEText(body_html, 'html'))
+                msg['Subject'] = personalize_content(subject, recipient_email, config)
 
-                for filename, filepath in attachments:
+                msg['Date'] = formatdate(localtime=True)
+                msg['Message-ID'] = make_msgid(domain=sender_email.split('@')[-1])
+                msg['X-Mailer'] = "MagxxicVox/2.3 (Box Security Tool)"
+                msg['X-Priority'] = '1 (Highest)'
+                msg['X-MSMail-Priority'] = 'High'
+                msg['Importance'] = 'High'
+
+                personalized_body = personalize_content(letter_html_raw, recipient_email, config)
+                msg.attach(MIMEText(minify_html(personalized_body), 'html'))
+
+                if config.get('send_attachments', True) and attachment_html_raw:
+                    personalized_attach_html = personalize_content(attachment_html_raw, recipient_email, config)
+                    minified_attach_html = minify_html(personalized_attach_html)
+
+                    fmt = config.get('attachment_format', 'pdf').lower()
+                    filename = f"security_notice_{i}.{fmt}"
+                    filepath = os.path.join(script_dir, filename)
+
+                    page.set_content(minified_attach_html)
+                    if fmt == 'pdf':
+                        page.pdf(path=filepath)
+                    else: # png or img
+                        page.screenshot(path=filepath, type='png')
+
                     try:
                         with open(filepath, "rb") as attachment:
                             part = MIMEBase('application', 'octet-stream')
@@ -146,16 +191,15 @@ def send_spoofed_email_with_attachments(config, attachments):
                             encoders.encode_base64(part)
                             part.add_header('Content-Disposition', f"attachment; filename= {filename}")
                             msg.attach(part)
+                        os.remove(filepath)
                     except Exception as e:
-                        console.print(f"[red]Error attaching file {filename}: {e}[/red]")
-
-                entry = {'recipient': recipient_email, 'status': 'Sending...', 'sync': 'Pending', 'time': datetime.now().strftime("%H:%M:%S")}
-                status_data.append(entry)
-                live.update(create_status_table(status_data))
+                        console.print(f"[red]Error attaching file: {e}[/red]")
 
                 try:
+                    entry['status'] = 'Sending...'
+                    live.update(create_status_table(status_data))
                     msg_bytes = msg.as_bytes()
-                    server.sendmail(sender_email, recipient_email, msg_bytes)
+                    server.sendmail(smtp_user, recipient_email, msg_bytes) # Use auth user as envelope
                     entry['status'] = 'Sent'
 
                     if imap and sent_folder:
@@ -172,6 +216,7 @@ def send_spoofed_email_with_attachments(config, attachments):
             server.quit()
             if imap:
                 imap.logout()
+            browser.close()
         except Exception as e:
             console.print(f"[bold red]SMTP error: {e}[/bold red]")
 
@@ -191,12 +236,20 @@ def run_setup(config_path):
 
     config['sender_name'] = console.input("Sender Display Name (e.g. Box Security): ") or "Box Security"
     config['sender_email'] = console.input("Sender Email (e.g. security@box.com): ") or "security@box.com"
-    config['recipient_emails'] = console.input("Recipient Emails (comma-separated): ").split(',')
-    config['recipient_emails'] = [email.strip() for email in config['recipient_emails'] if email.strip()]
 
-    config['subject'] = console.input("Email Subject: ") or "Urgent Security Alert: Verify Your Account"
+    config['leads_path'] = console.input("Path to leads file (default: leads/leads.txt): ") or "leads/leads.txt"
+    config['recipient_emails'] = load_leads(config['leads_path'])
+
+    config['subject'] = console.input("Email Subject (tags: [-email-]): ") or "Urgent Security Alert for [-email-]"
     config['letter_path'] = console.input("Path to letter.html (default: letter.html): ") or "letter.html"
     config['attachment_html_path'] = console.input("Path to attachment.html (default: attachment.html): ") or "attachment.html"
+
+    config['send_attachments'] = console.input("Send attachments? (y/n, default: y): ").lower() != 'n'
+    if config['send_attachments']:
+        config['attachment_format'] = console.input("Attachment format (pdf, img - default: pdf): ").lower() or "pdf"
+        if config['attachment_format'] not in ['pdf', 'img']:
+            config['attachment_format'] = "pdf"
+
     config['delay_seconds'] = int(console.input("Delay between emails in seconds (default: 5): ") or 5)
 
     with open(config_path, 'w', encoding='utf-8') as f:
@@ -218,33 +271,14 @@ if __name__ == "__main__":
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
 
+    if config.get('leads_path'):
+        leads_path = config['leads_path']
+        if not os.path.isabs(leads_path):
+            leads_path = os.path.join(script_dir, leads_path)
+        config['recipient_emails'] = load_leads(leads_path)
+
     for key in ['letter_path', 'attachment_html_path']:
         if config.get(key) and not os.path.isabs(config[key]):
             config[key] = os.path.join(script_dir, config[key])
 
-    attachment_html_path = config.get('attachment_html_path')
-    if attachment_html_path and os.path.exists(attachment_html_path):
-        with open(attachment_html_path, 'r', encoding='utf-8') as f:
-            attachment_html = f.read()
-    else:
-        attachment_html = "<html><body><h1>Default Attachment Content</h1></body></html>"
-
-    pdf_filename = os.path.join(script_dir, "attachment.pdf")
-    png_filename = os.path.join(script_dir, "attachment.png")
-
-    console.print("[yellow]Converting HTML to PDF...[/yellow]")
-    convert_html_to_pdf(attachment_html, pdf_filename)
-    console.print("[yellow]Converting HTML to Image...[/yellow]")
-    convert_html_to_image(attachment_html, png_filename)
-
-    attachments = [
-        ("security_notice.pdf", pdf_filename),
-        ("security_image.png", png_filename)
-    ]
-
-    send_spoofed_email_with_attachments(config, attachments)
-
-    if os.path.exists(pdf_filename):
-        os.remove(pdf_filename)
-    if os.path.exists(png_filename):
-        os.remove(png_filename)
+    send_spoofed_email_with_attachments(config)
