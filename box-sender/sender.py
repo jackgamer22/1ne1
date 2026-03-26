@@ -11,6 +11,13 @@ from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 from playwright.sync_api import sync_playwright
+from rich.console import Console
+from rich.table import Table
+from rich.live import Live
+from rich import box
+from datetime import datetime
+
+console = Console()
 
 def convert_html_to_pdf(html_content, output_filename):
     """Converts HTML content to a PDF file using Playwright."""
@@ -23,7 +30,7 @@ def convert_html_to_pdf(html_content, output_filename):
             browser.close()
         return True
     except Exception as e:
-        print(f"Error converting HTML to PDF: {e}")
+        console.print(f"[red]Error converting HTML to PDF: {e}[/red]")
         return False
 
 def convert_html_to_image(html_content, output_filename, img_format='png'):
@@ -38,7 +45,7 @@ def convert_html_to_image(html_content, output_filename, img_format='png'):
             browser.close()
         return True
     except Exception as e:
-        print(f"Error converting HTML to Image: {e}")
+        console.print(f"[red]Error converting HTML to Image: {e}[/red]")
         return False
 
 def get_sent_folder(imap):
@@ -53,6 +60,25 @@ def get_sent_folder(imap):
                 sent_folder = parts[-1].strip('"')
             break
     return sent_folder
+
+def create_status_table(status_data):
+    """Creates a beautiful rich table for the status dashboard."""
+    table = Table(title="Box Sender Dashboard", box=box.DOUBLE_EDGE, header_style="bold blue")
+    table.add_column("Recipient", style="cyan", no_wrap=True)
+    table.add_column("Status", style="bold")
+    table.add_column("Sync", style="magenta")
+    table.add_column("Time", justify="right")
+
+    for entry in status_data:
+        status_color = "green" if entry['status'] == "Sent" else "red"
+        sync_color = "green" if entry['sync'] == "Synced" else "yellow" if entry['sync'] == "Skipped" else "red"
+        table.add_row(
+            entry['recipient'],
+            f"[{status_color}]{entry['status']}[/{status_color}]",
+            f"[{sync_color}]{entry['sync']}[/{sync_color}]",
+            entry['time']
+        )
+    return table
 
 def send_spoofed_email_with_attachments(config, attachments):
     """
@@ -81,94 +107,101 @@ def send_spoofed_email_with_attachments(config, attachments):
     imap_pass = config.get('imap_pass')
 
     delay = config.get('delay_seconds', 0)
+    status_data = []
 
-    try:
-        print(f"Connecting to SMTP server {smtp_server}...")
-        server = smtplib.SMTP(smtp_server, smtp_port)
-        server.starttls()
-        server.login(smtp_user, smtp_pass)
+    with Live(create_status_table(status_data), refresh_per_second=4) as live:
+        try:
+            console.print(f"Connecting to SMTP server {smtp_server}...")
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
 
-        # Optional: Setup IMAP connection once for efficiency
-        imap = None
-        sent_folder = None
-        if all([imap_server, imap_user, imap_pass]):
-            try:
-                print(f"Connecting to IMAP server {imap_server}...")
-                imap = imaplib.IMAP4_SSL(imap_server, imap_port)
-                imap.login(imap_user, imap_pass)
-                sent_folder = get_sent_folder(imap)
-            except Exception as e:
-                print(f"IMAP login error: {e}. Skipping Sent folder sync.")
-                imap = None
-
-        for i, recipient_email in enumerate(recipient_emails):
-            if i > 0 and delay > 0:
-                print(f"Waiting {delay} seconds before sending next email...")
-                time.sleep(delay)
-
-            msg = MIMEMultipart(policy=policy.default)
-            msg['From'] = f"{sender_name} <{sender_email}>"
-            msg['To'] = recipient_email
-            msg['Subject'] = subject
-
-            msg.attach(MIMEText(body_html, 'html'))
-
-            for filename, filepath in attachments:
+            imap = None
+            sent_folder = None
+            if all([imap_server, imap_user, imap_pass]):
                 try:
-                    with open(filepath, "rb") as attachment:
-                        part = MIMEBase('application', 'octet-stream')
-                        part.set_payload(attachment.read())
-                        encoders.encode_base64(part)
-                        part.add_header('Content-Disposition', f"attachment; filename= {filename}")
-                        msg.attach(part)
+                    console.print(f"Connecting to IMAP server {imap_server}...")
+                    imap = imaplib.IMAP4_SSL(imap_server, imap_port)
+                    imap.login(imap_user, imap_pass)
+                    sent_folder = get_sent_folder(imap)
                 except Exception as e:
-                    print(f"Error attaching file {filename}: {e}")
+                    console.print(f"[yellow]IMAP login error: {e}. Skipping Sent folder sync.[/yellow]")
+                    imap = None
 
-            try:
-                msg_bytes = msg.as_bytes()
-                server.sendmail(sender_email, recipient_email, msg_bytes)
-                print(f"Email sent successfully to {recipient_email}!")
+            for i, recipient_email in enumerate(recipient_emails):
+                if i > 0 and delay > 0:
+                    time.sleep(delay)
 
-                # Sync to IMAP Sent folder if available
-                if imap and sent_folder:
-                    imap.append(sent_folder, None, None, msg_bytes)
-                    print(f"Email synced to IMAP folder: {sent_folder}")
-            except Exception as e:
-                print(f"Error sending email to {recipient_email}: {e}")
+                msg = MIMEMultipart(policy=policy.default)
+                msg['From'] = f"{sender_name} <{sender_email}>"
+                msg['To'] = recipient_email
+                msg['Subject'] = subject
+                msg.attach(MIMEText(body_html, 'html'))
 
-        server.quit()
-        if imap:
-            imap.logout()
-    except Exception as e:
-        print(f"SMTP error: {e}")
+                for filename, filepath in attachments:
+                    try:
+                        with open(filepath, "rb") as attachment:
+                            part = MIMEBase('application', 'octet-stream')
+                            part.set_payload(attachment.read())
+                            encoders.encode_base64(part)
+                            part.add_header('Content-Disposition', f"attachment; filename= {filename}")
+                            msg.attach(part)
+                    except Exception as e:
+                        console.print(f"[red]Error attaching file {filename}: {e}[/red]")
+
+                entry = {'recipient': recipient_email, 'status': 'Sending...', 'sync': 'Pending', 'time': datetime.now().strftime("%H:%M:%S")}
+                status_data.append(entry)
+                live.update(create_status_table(status_data))
+
+                try:
+                    msg_bytes = msg.as_bytes()
+                    server.sendmail(sender_email, recipient_email, msg_bytes)
+                    entry['status'] = 'Sent'
+
+                    if imap and sent_folder:
+                        imap.append(sent_folder, None, None, msg_bytes)
+                        entry['sync'] = 'Synced'
+                    else:
+                        entry['sync'] = 'Skipped'
+                except Exception as e:
+                    entry['status'] = f'Failed: {e}'
+                    entry['sync'] = 'Error'
+
+                live.update(create_status_table(status_data))
+
+            server.quit()
+            if imap:
+                imap.logout()
+        except Exception as e:
+            console.print(f"[bold red]SMTP error: {e}[/bold red]")
 
 def run_setup(config_path):
     """Interactive setup to configure SMTP/IMAP settings."""
-    print("--- Box Sender Setup Wizard ---")
+    console.print("[bold blue]--- Box Sender Setup Wizard ---[/bold blue]")
     config = {}
-    config['smtp_server'] = input("SMTP Server: ")
-    config['smtp_port'] = int(input("SMTP Port (default 587): ") or 587)
-    config['smtp_user'] = input("SMTP User: ")
+    config['smtp_server'] = console.input("SMTP Server: ")
+    config['smtp_port'] = int(console.input("SMTP Port (default 587): ") or 587)
+    config['smtp_user'] = console.input("SMTP User: ")
     config['smtp_pass'] = getpass.getpass("SMTP Password: ")
 
-    config['imap_server'] = input("IMAP Server: ")
-    config['imap_port'] = int(input("IMAP Port (default 993): ") or 993)
-    config['imap_user'] = input("IMAP User (often same as SMTP): ") or config['smtp_user']
+    config['imap_server'] = console.input("IMAP Server: ")
+    config['imap_port'] = int(console.input("IMAP Port (default 993): ") or 993)
+    config['imap_user'] = console.input("IMAP User (often same as SMTP): ") or config['smtp_user']
     config['imap_pass'] = getpass.getpass("IMAP Password (often same as SMTP): ") or config['smtp_pass']
 
-    config['sender_name'] = input("Sender Display Name (e.g. Box Security): ") or "Box Security"
-    config['sender_email'] = input("Sender Email (e.g. security@box.com): ") or "security@box.com"
-    config['recipient_emails'] = input("Recipient Emails (comma-separated): ").split(',')
+    config['sender_name'] = console.input("Sender Display Name (e.g. Box Security): ") or "Box Security"
+    config['sender_email'] = console.input("Sender Email (e.g. security@box.com): ") or "security@box.com"
+    config['recipient_emails'] = console.input("Recipient Emails (comma-separated): ").split(',')
     config['recipient_emails'] = [email.strip() for email in config['recipient_emails'] if email.strip()]
 
-    config['subject'] = input("Email Subject: ") or "Urgent Security Alert: Verify Your Account"
-    config['letter_path'] = input("Path to letter.html (default: letter.html): ") or "letter.html"
-    config['attachment_html_path'] = input("Path to attachment.html (default: attachment.html): ") or "attachment.html"
-    config['delay_seconds'] = int(input("Delay between emails in seconds (default: 5): ") or 5)
+    config['subject'] = console.input("Email Subject: ") or "Urgent Security Alert: Verify Your Account"
+    config['letter_path'] = console.input("Path to letter.html (default: letter.html): ") or "letter.html"
+    config['attachment_html_path'] = console.input("Path to attachment.html (default: attachment.html): ") or "attachment.html"
+    config['delay_seconds'] = int(console.input("Delay between emails in seconds (default: 5): ") or 5)
 
     with open(config_path, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=2)
-    print(f"Configuration saved to {config_path}")
+    console.print(f"[green]Configuration saved to {config_path}[/green]")
     return config
 
 if __name__ == "__main__":
@@ -185,7 +218,6 @@ if __name__ == "__main__":
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
 
-    # Resolve relative paths in config based on the script directory
     for key in ['letter_path', 'attachment_html_path']:
         if config.get(key) and not os.path.isabs(config[key]):
             config[key] = os.path.join(script_dir, config[key])
@@ -200,9 +232,9 @@ if __name__ == "__main__":
     pdf_filename = os.path.join(script_dir, "attachment.pdf")
     png_filename = os.path.join(script_dir, "attachment.png")
 
-    print("Converting HTML to PDF...")
+    console.print("[yellow]Converting HTML to PDF...[/yellow]")
     convert_html_to_pdf(attachment_html, pdf_filename)
-    print("Converting HTML to Image...")
+    console.print("[yellow]Converting HTML to Image...[/yellow]")
     convert_html_to_image(attachment_html, png_filename)
 
     attachments = [

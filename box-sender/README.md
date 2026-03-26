@@ -10,9 +10,14 @@ This tool allows sending emails that appear to originate from Box, with customiz
 - **External Templates**: Load the email body and attachment content from separate HTML files (`letter.html` and `attachment.html`).
 - **Send Delay**: Configurable delay between sending emails to different recipients.
 - **IMAP Synchronization**: Automatically appends sent emails to your IMAP 'Sent' folder, making it look as if they were sent directly from your mailbox.
+- **One-Click Scripts**: Includes `setup.bat` and `start.bat` for easy installation and execution on Windows.
 
 ## Setup
 
+### Windows
+1.  Run `setup.bat` to install all dependencies and browser binaries.
+
+### Linux / macOS
 1.  **Clone this repository** (if not already done).
 2.  **Install dependencies**:
     ```bash
@@ -22,18 +27,13 @@ This tool allows sending emails that appear to originate from Box, with customiz
     ```bash
     playwright install chromium
     ```
-4.  **Run the setup wizard**:
-    The script will automatically prompt for configuration if `config.json` is missing.
-    ```bash
-    python3 sender.py
-    ```
-    Alternatively, you can force the setup wizard at any time:
-    ```bash
-    python3 sender.py --setup
-    ```
 
 ## Usage
 
+### Windows
+1.  Run `start.bat`. On the first run, it will launch the setup wizard automatically.
+
+### Linux / macOS
 Once configured, run the sender script:
 ```bash
 python3 sender.py
@@ -46,6 +46,11 @@ The script will:
 4.  Sync each sent email to the IMAP 'Sent' folder.
 
 ## Configuration Options
+
+The tool supports a forced setup wizard at any time:
+```bash
+python3 sender.py --setup
+```
 
 While the setup wizard handles most settings, you can manually edit `config.json`:
 
