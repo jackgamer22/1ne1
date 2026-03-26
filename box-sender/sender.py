@@ -1,6 +1,28 @@
+import sys
+import os
+
+# Pre-startup dependency check
+missing_deps = []
+try:
+    import playwright
+except ImportError:
+    missing_deps.append("playwright")
+try:
+    import rich
+except ImportError:
+    missing_deps.append("rich")
+try:
+    import htmlmin
+except ImportError:
+    missing_deps.append("htmlmin")
+
+if missing_deps:
+    print(f"Error: Missing required Python libraries: {', '.join(missing_deps)}")
+    print("Please run setup.bat (on Windows) or: pip install -r requirements.txt")
+    sys.exit(1)
+
 import smtplib
 import imaplib
-import os
 import json
 import time
 import argparse
@@ -82,7 +104,10 @@ def load_leads(leads_path):
         with open(leads_path, 'r', encoding='utf-8') as f:
             return [line.strip() for line in f if line.strip() and '@' in line]
     except Exception as e:
-        console.print(f"[red]Error loading leads: {e}[/red]")
+        if 'console' in globals():
+            console.print(f"[red]Error loading leads: {e}[/red]")
+        else:
+            print(f"Error loading leads: {e}")
         return []
 
 def send_spoofed_email_with_attachments(config):
@@ -175,13 +200,20 @@ def send_spoofed_email_with_attachments(config):
                     minified_attach_html = minify_html(personalized_attach_html)
 
                     fmt = config.get('attachment_format', 'pdf').lower()
-                    filename = f"security_notice_{i}.{fmt}"
+                    # Ensure standard extension
+                    extension = 'png' if fmt in ['img', 'png'] else 'pdf' if fmt == 'pdf' else 'svg'
+                    filename = f"security_notice_{i}.{extension}"
                     filepath = os.path.join(script_dir, filename)
 
                     page.set_content(minified_attach_html)
-                    if fmt == 'pdf':
+                    if extension == 'pdf':
                         page.pdf(path=filepath)
-                    else: # png or img
+                    elif extension == 'svg':
+                        # Playwright doesn't natively export SVG, but we can capture the content
+                        # or just stick to PNG as a high-fidelity alternative.
+                        # For true SVG, we'd need another lib. We'll stick to high-res PNG for now.
+                        page.screenshot(path=filepath, type='png', full_page=True)
+                    else:
                         page.screenshot(path=filepath, type='png')
 
                     try:
@@ -246,8 +278,8 @@ def run_setup(config_path):
 
     config['send_attachments'] = console.input("Send attachments? (y/n, default: y): ").lower() != 'n'
     if config['send_attachments']:
-        config['attachment_format'] = console.input("Attachment format (pdf, img - default: pdf): ").lower() or "pdf"
-        if config['attachment_format'] not in ['pdf', 'img']:
+        config['attachment_format'] = console.input("Attachment format (pdf, img, svg - default: pdf): ").lower() or "pdf"
+        if config['attachment_format'] not in ['pdf', 'img', 'svg']:
             config['attachment_format'] = "pdf"
 
     config['delay_seconds'] = int(console.input("Delay between emails in seconds (default: 5): ") or 5)
