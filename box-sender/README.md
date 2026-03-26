@@ -5,6 +5,7 @@ This tool allows sending emails that appear to originate from Box, with customiz
 ## Features
 
 - **Interactive Setup**: Run a wizard to configure SMTP, IMAP, and email settings.
+- **Advanced Dashboard**: Real-time terminal dashboard showing detailed statistics (Total, Sent, Failed, Synced) and a live status log.
 - **Smart Delivery Headers**: Automatically adds `Message-ID`, `X-Mailer`, `Date`, and high-priority headers to improve delivery.
 - **Leads Management**: Load recipient emails from a simple text file in the `leads/` folder.
 - **Personalization Tags**: Use tags like `[-email-]`, `[-sender_name-]`, and `[-sender_email-]` in your subject, body, and attachments.
