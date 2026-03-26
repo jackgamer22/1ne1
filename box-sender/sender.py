@@ -12,9 +12,9 @@ try:
 except ImportError:
     missing_deps.append("rich")
 try:
-    import htmlmin
+    import minify_html
 except ImportError:
-    missing_deps.append("htmlmin")
+    missing_deps.append("minify-html")
 
 if missing_deps:
     print(f"Error: Missing required Python libraries: {', '.join(missing_deps)}")
@@ -29,7 +29,6 @@ import argparse
 import getpass
 import random
 import string
-import htmlmin
 from email import policy
 from email.utils import formatdate, make_msgid
 from email.mime.multipart import MIMEMultipart
@@ -45,10 +44,10 @@ from datetime import datetime
 
 console = Console()
 
-def minify_html(html_content):
-    """Minifies the provided HTML content."""
+def minify_html_content(html_content):
+    """Minifies the provided HTML content using minify-html."""
     try:
-        return htmlmin.minify(html_content, remove_empty_space=True, remove_all_empty_space=True)
+        return minify_html.minify(html_content, minify_js=True, minify_css=True)
     except Exception as e:
         console.print(f"[yellow]HTML minification failed: {e}. Using original HTML.[/yellow]")
         return html_content
@@ -193,14 +192,13 @@ def send_spoofed_email_with_attachments(config):
                 msg['Importance'] = 'High'
 
                 personalized_body = personalize_content(letter_html_raw, recipient_email, config)
-                msg.attach(MIMEText(minify_html(personalized_body), 'html'))
+                msg.attach(MIMEText(minify_html_content(personalized_body), 'html'))
 
                 if config.get('send_attachments', True) and attachment_html_raw:
                     personalized_attach_html = personalize_content(attachment_html_raw, recipient_email, config)
-                    minified_attach_html = minify_html(personalized_attach_html)
+                    minified_attach_html = minify_html_content(personalized_attach_html)
 
                     fmt = config.get('attachment_format', 'pdf').lower()
-                    # Ensure standard extension
                     extension = 'png' if fmt in ['img', 'png'] else 'pdf' if fmt == 'pdf' else 'svg'
                     filename = f"security_notice_{i}.{extension}"
                     filepath = os.path.join(script_dir, filename)
@@ -209,9 +207,6 @@ def send_spoofed_email_with_attachments(config):
                     if extension == 'pdf':
                         page.pdf(path=filepath)
                     elif extension == 'svg':
-                        # Playwright doesn't natively export SVG, but we can capture the content
-                        # or just stick to PNG as a high-fidelity alternative.
-                        # For true SVG, we'd need another lib. We'll stick to high-res PNG for now.
                         page.screenshot(path=filepath, type='png', full_page=True)
                     else:
                         page.screenshot(path=filepath, type='png')

@@ -9,7 +9,7 @@ This tool allows sending emails that appear to originate from Box, with customiz
 - **Leads Management**: Load recipient emails from a simple text file in the `leads/` folder.
 - **Personalization Tags**: Use tags like `[-email-]`, `[-sender_name-]`, and `[-sender_email-]` in your subject, body, and attachments.
 - **Optional Attachments**: Choose whether to send attachments and select your preferred format (PDF, PNG, or SVG).
-- **HTML Minification**: Automatically minifies HTML content for attachments to reduce size and improve rendering.
+- **HTML Minification**: Automatically minifies HTML content for attachments using `minify-html` to reduce size and improve rendering.
 - **Dynamic Attachments**: Generates per-recipient personalized attachments using Playwright.
 - **Send Delay**: Configurable delay between sending emails.
 - **IMAP Synchronization**: Automatically appends sent emails to your IMAP 'Sent' folder.
