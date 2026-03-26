@@ -15,6 +15,10 @@ try:
     import minify_html
 except ImportError:
     missing_deps.append("minify-html")
+try:
+    import dkim
+except ImportError:
+    missing_deps.append("dkimpy")
 
 if missing_deps:
     print(f"Error: Missing required Python libraries: {', '.join(missing_deps)}")
@@ -129,7 +133,7 @@ def create_dashboard_layout(status_data, sent_count, fail_count, sync_count, tot
         Layout(name="header", size=3),
         Layout(name="main")
     )
-    layout["header"].update(Panel("[bold white]Box Sender - Advanced Dashboard[/bold white]", box=box.SQUARE, border_style="blue", style="on blue", subtitle="v2.6"))
+    layout["header"].update(Panel("[bold white]Box Sender - Advanced Dashboard[/bold white]", box=box.SQUARE, border_style="blue", style="on blue", subtitle="v2.7"))
 
     main_layout = Layout()
     main_layout.split_row(
@@ -159,6 +163,33 @@ def get_smtp_connection(server_host, port, user, password):
         server.starttls(context=context)
     server.login(user, password)
     return server
+
+def sign_with_dkim(msg, config):
+    """Signs the email message with DKIM if configured."""
+    if not config.get('use_dkim', False):
+        return msg
+
+    selector = config.get('dkim_selector')
+    domain = config.get('sender_email', '').split('@')[-1]
+    key_path = config.get('dkim_private_key_path')
+
+    if not all([selector, domain, key_path]) or not os.path.exists(key_path):
+        console.print("[yellow]DKIM configuration incomplete or key file missing. Skipping signing.[/yellow]")
+        return msg
+
+    try:
+        with open(key_path, 'rb') as f:
+            private_key = f.read()
+
+        headers_to_sign = [b'from', b'to', b'subject', b'date', b'message-id']
+        sig = dkim.sign(msg.as_bytes(), selector.encode(), domain.encode(), private_key, include_headers=headers_to_sign)
+        # Signature comes back with "DKIM-Signature: ..." prefix
+        sig_str = sig.decode()
+        msg['DKIM-Signature'] = sig_str[len("DKIM-Signature: "):]
+        return msg
+    except Exception as e:
+        console.print(f"[red]DKIM signing failed: {e}[/red]")
+        return msg
 
 def send_spoofed_email_with_attachments(config):
     """
@@ -240,7 +271,7 @@ def send_spoofed_email_with_attachments(config):
 
                 msg['Date'] = formatdate(localtime=True)
                 msg['Message-ID'] = make_msgid(domain=sender_email.split('@')[-1])
-                msg['X-Mailer'] = "MagxxicVox/2.6 (Box Security Tool)"
+                msg['X-Mailer'] = "MagxxicVox/2.7 (Box Security Tool)"
                 msg['X-Priority'] = '1 (Highest)'
                 msg['X-MSMail-Priority'] = 'High'
                 msg['Importance'] = 'High'
@@ -253,7 +284,6 @@ def send_spoofed_email_with_attachments(config):
                     minified_attach_html = minify_html_content(personalized_attach_html)
 
                     fmt = config.get('attachment_format', 'pdf').lower()
-                    # Ensure standard extension
                     extension = 'png' if fmt in ['img', 'png'] else 'pdf' if fmt == 'pdf' else 'svg'
                     filename = f"security_notice_{i}.{extension}"
                     filepath = os.path.join(script_dir, filename)
@@ -261,11 +291,6 @@ def send_spoofed_email_with_attachments(config):
                     page.set_content(minified_attach_html)
                     if extension == 'pdf':
                         page.pdf(path=filepath)
-                    elif extension == 'svg':
-                        # Playwright doesn't natively export SVG.
-                        # We'll use a high-res PNG as requested and rename as a fallback or explain.
-                        # For true SVG, we'd need another library.
-                        page.screenshot(path=filepath, type='png', full_page=True)
                     else:
                         page.screenshot(path=filepath, type='png', full_page=True)
 
@@ -280,11 +305,13 @@ def send_spoofed_email_with_attachments(config):
                     except Exception as e:
                         console.print(f"[red]Error attaching file: {e}[/red]")
 
+                # Apply DKIM signature
+                msg = sign_with_dkim(msg, config)
+
                 try:
                     entry['status'] = 'Sending...'
                     live.update(create_dashboard_layout(status_data, sent_count, fail_count, sync_count, total, use_imap))
                     msg_bytes = msg.as_bytes()
-                    # Use auth user as envelope sender to improve delivery
                     server.sendmail(smtp_user, recipient_email, msg_bytes)
                     entry['status'] = 'Sent'
                     sent_count += 1
@@ -313,35 +340,33 @@ def run_setup(config_path):
     """Interactive setup to configure SMTP/IMAP settings."""
     console.print("[bold blue]--- Box Sender Setup Wizard ---[/bold blue]")
     config = {}
-    config['smtp_server'] = console.input("SMTP Server (e.g. smtp.gmail.com): ")
-    config['smtp_port'] = int(console.input("SMTP Port (465 for SSL, 587 for STARTTLS): ") or 587)
-    config['smtp_user'] = console.input("SMTP User (your email): ")
+    config['smtp_server'] = console.input("SMTP Server: ")
+    config['smtp_port'] = int(console.input("SMTP Port (465/587): ") or 587)
+    config['smtp_user'] = console.input("SMTP User: ")
     config['smtp_pass'] = getpass.getpass("SMTP Password: ")
 
     config['use_imap'] = console.input("Enable IMAP Sent folder sync? (y/n): ").lower() == 'y'
     if config['use_imap']:
         config['imap_server'] = console.input("IMAP Server: ")
-        config['imap_port'] = int(console.input("IMAP Port (default 993): ") or 993)
-        config['imap_user'] = console.input("IMAP User (often same as SMTP): ") or config['smtp_user']
-        config['imap_pass'] = getpass.getpass("IMAP Password (often same as SMTP): ") or config['smtp_pass']
-    else:
-        config['imap_server'] = ""
-        config['imap_port'] = 993
-        config['imap_user'] = ""
-        config['imap_pass'] = ""
+        config['imap_port'] = int(console.input("IMAP Port (993): ") or 993)
+        config['imap_user'] = console.input("IMAP User: ") or config['smtp_user']
+        config['imap_pass'] = getpass.getpass("IMAP Password: ") or config['smtp_pass']
+
+    config['use_dkim'] = console.input("Enable DKIM signing? (y/n): ").lower() == 'y'
+    if config['use_dkim']:
+        config['dkim_selector'] = console.input("DKIM Selector (e.g. default): ")
+        config['dkim_private_key_path'] = console.input("Path to DKIM Private Key file: ")
 
     config['sender_name'] = console.input("Sender Display Name: ") or "Box Security"
-    config['sender_email'] = console.input("Sender Email (displayed From): ") or "security@box.com"
-    config['leads_path'] = console.input("Path to leads file (default: leads/leads.txt): ") or "leads/leads.txt"
-    config['subject'] = console.input("Email Subject (tags: [-email-]): ") or "Urgent Security Alert for [-email-]"
+    config['sender_email'] = console.input("Sender Email: ") or "security@box.com"
+    config['leads_path'] = console.input("Path to leads file: ") or "leads/leads.txt"
+    config['subject'] = console.input("Email Subject: ") or "Urgent Security Alert for [-email-]"
     config['letter_path'] = console.input("Path to letter.html: ") or "letter.html"
     config['attachment_html_path'] = console.input("Path to attachment.html: ") or "attachment.html"
 
     config['send_attachments'] = console.input("Send attachments? (y/n): ").lower() != 'n'
     if config['send_attachments']:
-        config['attachment_format'] = console.input("Attachment format (pdf, png, svg): ").lower() or "pdf"
-        if config['attachment_format'] not in ['pdf', 'png', 'svg']:
-            config['attachment_format'] = "pdf"
+        config['attachment_format'] = console.input("Format (pdf, png): ").lower() or "pdf"
 
     config['delay_seconds'] = int(console.input("Delay in seconds (default 5): ") or 5)
 
@@ -370,7 +395,7 @@ if __name__ == "__main__":
             l_path = os.path.join(script_dir, l_path)
         config['recipient_emails'] = load_leads(l_path)
 
-    for key in ['letter_path', 'attachment_html_path']:
+    for key in ['letter_path', 'attachment_html_path', 'dkim_private_key_path']:
         if config.get(key) and not os.path.isabs(config[key]):
             config[key] = os.path.join(script_dir, config[key])
 
