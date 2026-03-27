@@ -19,6 +19,10 @@ try:
     import dkim
 except ImportError:
     missing_deps.append("dkimpy")
+try:
+    import cryptography
+except ImportError:
+    missing_deps.append("cryptography")
 
 if missing_deps:
     print(f"Error: Missing required Python libraries: {', '.join(missing_deps)}")
@@ -34,6 +38,7 @@ import getpass
 import random
 import string
 import ssl
+import base64
 from email import policy
 from email.utils import formatdate, make_msgid
 from email.mime.multipart import MIMEMultipart
@@ -48,8 +53,46 @@ from rich import box
 from rich.panel import Panel
 from rich.layout import Layout
 from datetime import datetime
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 console = Console()
+
+def generate_dkim_keys(script_dir):
+    """Generates an RSA-2048 key pair for DKIM."""
+    console.print("[yellow]Generating new DKIM RSA-2048 key pair...[/yellow]")
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048
+    )
+
+    # Save private key
+    private_key_path = os.path.join(script_dir, "dkim_private.key")
+    with open(private_key_path, "wb") as f:
+        f.write(private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=serialization.NoEncryption()
+        ))
+
+    # Get public key for DNS
+    public_key = private_key.public_key()
+    pub_bytes = public_key.public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    pub_b64 = base64.b64encode(pub_bytes).decode()
+
+    console.print(Panel(
+        f"[bold green]DKIM keys generated![/bold green]\n\n"
+        f"1. Private key saved to: [cyan]{private_key_path}[/cyan]\n"
+        f"2. Add the following TXT record to your DNS for your selector:\n\n"
+        f"[bold white]v=DKIM1; k=rsa; p={pub_b64}[/bold white]",
+        title="[bold blue]DNS Setup Instructions[/bold blue]",
+        box=box.ROUNDED
+    ))
+
+    return private_key_path
 
 def minify_html_content(html_content):
     """Minifies the provided HTML content using minify-html."""
@@ -174,7 +217,6 @@ def sign_with_dkim(msg, config):
     key_path = config.get('dkim_private_key_path')
 
     if not all([selector, domain, key_path]) or not os.path.exists(key_path):
-        console.print("[yellow]DKIM configuration incomplete or key file missing. Skipping signing.[/yellow]")
         return msg
 
     try:
@@ -183,12 +225,10 @@ def sign_with_dkim(msg, config):
 
         headers_to_sign = [b'from', b'to', b'subject', b'date', b'message-id']
         sig = dkim.sign(msg.as_bytes(), selector.encode(), domain.encode(), private_key, include_headers=headers_to_sign)
-        # Signature comes back with "DKIM-Signature: ..." prefix
         sig_str = sig.decode()
         msg['DKIM-Signature'] = sig_str[len("DKIM-Signature: "):]
         return msg
     except Exception as e:
-        console.print(f"[red]DKIM signing failed: {e}[/red]")
         return msg
 
 def send_spoofed_email_with_attachments(config):
@@ -305,7 +345,6 @@ def send_spoofed_email_with_attachments(config):
                     except Exception as e:
                         console.print(f"[red]Error attaching file: {e}[/red]")
 
-                # Apply DKIM signature
                 msg = sign_with_dkim(msg, config)
 
                 try:
@@ -339,6 +378,7 @@ def send_spoofed_email_with_attachments(config):
 def run_setup(config_path):
     """Interactive setup to configure SMTP/IMAP settings."""
     console.print("[bold blue]--- Box Sender Setup Wizard ---[/bold blue]")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     config = {}
     config['smtp_server'] = console.input("SMTP Server: ")
     config['smtp_port'] = int(console.input("SMTP Port (465/587): ") or 587)
@@ -348,14 +388,18 @@ def run_setup(config_path):
     config['use_imap'] = console.input("Enable IMAP Sent folder sync? (y/n): ").lower() == 'y'
     if config['use_imap']:
         config['imap_server'] = console.input("IMAP Server: ")
-        config['imap_port'] = int(console.input("IMAP Port (993): ") or 993)
+        config['imap_port'] = int(console.input("IMAP Port (default 993): ") or 993)
         config['imap_user'] = console.input("IMAP User: ") or config['smtp_user']
         config['imap_pass'] = getpass.getpass("IMAP Password: ") or config['smtp_pass']
 
     config['use_dkim'] = console.input("Enable DKIM signing? (y/n): ").lower() == 'y'
     if config['use_dkim']:
         config['dkim_selector'] = console.input("DKIM Selector (e.g. default): ")
-        config['dkim_private_key_path'] = console.input("Path to DKIM Private Key file: ")
+        choice = console.input("Generate new DKIM keys? (y/n): ").lower()
+        if choice == 'y':
+            config['dkim_private_key_path'] = generate_dkim_keys(script_dir)
+        else:
+            config['dkim_private_key_path'] = console.input("Path to existing DKIM Private Key file: ")
 
     config['sender_name'] = console.input("Sender Display Name: ") or "Box Security"
     config['sender_email'] = console.input("Sender Email: ") or "security@box.com"

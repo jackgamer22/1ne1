@@ -5,7 +5,7 @@ This tool allows sending emails that appear to originate from Box, with customiz
 ## Features
 
 - **Interactive Setup**: Run a wizard to configure SMTP, optional IMAP, and DKIM settings.
-- **DKIM Signing**: Automatically signs outgoing emails with DKIM to improve authentication and inboxing rates.
+- **DKIM Signing & Key Generation**: Automatically sign outgoing emails with DKIM. The setup wizard can generate a new RSA-2048 key pair for you and provide DNS TXT record instructions.
 - **Advanced Dashboard**: Real-time terminal dashboard showing detailed statistics (Total, Sent, Failed, Synced) and a live status log.
 - **Smart Delivery Headers**: Automatically adds `Message-ID`, `X-Mailer`, `Date`, and high-priority headers.
 - **Leads Management**: Load recipient emails from a simple text file in the `leads/` folder.
@@ -33,9 +33,10 @@ This tool allows sending emails that appear to originate from Box, with customiz
 ## DKIM Signing
 
 To use DKIM signing:
-1.  Generate a DKIM private/public key pair for your domain.
-2.  Publish the public key in your domain's DNS records.
-3.  Provide the path to your private key file and your DKIM selector during the setup wizard.
+1.  Run the setup wizard (`python3 sender.py --setup`).
+2.  Choose to "Generate new DKIM keys" when prompted.
+3.  The tool will save `dkim_private.key` and display a TXT record.
+4.  Publish the provided public key in your domain's DNS records.
 
 Signing your emails with DKIM proves that the email was authorized by the domain owner, which significantly helps in passing spam filters and reaching the inbox.
 
