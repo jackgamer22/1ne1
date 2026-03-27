@@ -1,0 +1,6 @@
+playwright
+rich
+minify-html
+dkimpy
+dnspython
+cryptography

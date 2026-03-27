@@ -1,0 +1,17 @@
+{
+  "smtp_server": "your_smtp_server.com",
+  "smtp_port": 587,
+  "smtp_user": "your_email@example.com",
+  "smtp_pass": "your_password",
+  "imap_server": "your_imap_server.com",
+  "imap_port": 993,
+  "imap_user": "your_email@example.com",
+  "imap_pass": "your_password",
+  "sender_name": "Box Security",
+  "sender_email": "security@box.com",
+  "recipient_emails": ["victim1@example.com", "victim2@example.com"],
+  "subject": "Urgent Security Alert: Verify Your Account",
+  "letter_path": "letter.html",
+  "attachment_html_path": "attachment.html",
+  "delay_seconds": 5
+}
