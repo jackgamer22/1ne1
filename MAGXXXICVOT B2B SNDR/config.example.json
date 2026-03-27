@@ -1,0 +1,54 @@
+{
+    "auth": {
+        "email": "your_email@example.com",
+        "password": "your_password",
+        "auto_discovery": true
+    },
+    "smtp": {
+        "host": "smtp.example.com",
+        "port": 587,
+        "user": "your_email@example.com",
+        "password": "your_password",
+        "use_tls": true
+    },
+    "imap": {
+        "host": "imap.example.com",
+        "port": 993,
+        "user": "your_email@example.com",
+        "password": "your_password",
+        "use_ssl": true,
+        "archive_folder": "Archive"
+    },
+    "proxy": {
+        "use_proxy": true,
+        "proxies": [
+            "socks5://proxy1.example.com:1080",
+            "socks5://user:pass@proxy2.example.com:1080"
+        ]
+    },
+    "dkim": {
+        "use_dkim": false,
+        "selector": "default",
+        "domain": "example.com",
+        "private_key_path": "dkim_private.key"
+    },
+    "email": {
+        "automated_mode": true,
+        "auto_discover_contacts": true,
+        "auto_draft_invite": true,
+        "contacts": [],
+        "subject": "Follow up: {{ context }}",
+        "body": "Hello,\n\nI was thinking about {{ context }} and wanted to share this invite with you.\n\nBest regards,",
+        "invite_template": "Following our discussion about {{ context }}, I've prepared a special invitation for you. Please check the attached file for more details.",
+        "use_html": true,
+        "logo_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+        "signature": "MAGXXXICVOT B2B SNDR Box Signature",
+        "send_attachments": true,
+        "attachments": [
+            "invite.html"
+        ],
+        "convert_html_attachments": true,
+        "minify_html": true,
+        "attachment_output_formats": ["pdf", "png", "svg"]
+    }
+}
