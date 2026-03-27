@@ -26,7 +26,14 @@
             "socks5://user:pass@proxy2.example.com:1080"
         ]
     },
+    "dkim": {
+        "use_dkim": false,
+        "selector": "default",
+        "domain": "example.com",
+        "private_key_path": "dkim_private.key"
+    },
     "email": {
+        "automated_mode": true,
         "auto_discover_contacts": true,
         "auto_draft_invite": true,
         "contacts": [],

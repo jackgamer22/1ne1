@@ -27,6 +27,8 @@ try: from defusedxml import ElementTree as ET
 except ImportError: MISSING_DEPS.append("defusedxml")
 try: import htmlmin
 except ImportError: MISSING_DEPS.append("htmlmin")
+try: import dkim
+except ImportError: MISSING_DEPS.append("dkimpy")
 try: from playwright.async_api import async_playwright
 except ImportError: MISSING_DEPS.append("playwright")
 try:
@@ -350,9 +352,30 @@ def get_conversation_context(config, recipient, proxy_manager=None):
     finally:
         socks.set_default_proxy()
 
+def sign_message(msg, dkim_cfg):
+    try:
+        with open(dkim_cfg['private_key_path'], 'rb') as f:
+            private_key = f.read()
+
+        headers = [b"To", b"From", b"Subject", b"Content-Type"]
+        sig = dkim.sign(
+            message=msg.as_bytes(),
+            selector=dkim_cfg['selector'].encode(),
+            domain=dkim_cfg['domain'].encode(),
+            privkey=private_key,
+            include_headers=headers
+        )
+        # Add the signature to the message headers
+        msg.add_header("DKIM-Signature", sig.decode().split(": ", 1)[1])
+        return msg
+    except Exception as e:
+        console.print(f"[red]DKIM Signing failed: {e}[/red]")
+        return msg
+
 def send_email(config, recipient, context, proxy_manager=None):
     smtp_cfg = config['smtp']
     email_cfg = config['email']
+    dkim_cfg = config.get('dkim', {})
 
     if proxy_manager and config.get('proxy', {}).get('use_proxy'):
         proxy_manager.apply_proxy(proxy_manager.get_next_proxy())
@@ -435,6 +458,10 @@ def send_email(config, recipient, context, proxy_manager=None):
             except Exception as e:
                 console.print(f"[red]Error attaching {file_path}: {e}[/red]")
 
+    # DKIM Signing
+    if dkim_cfg.get('use_dkim'):
+        msg = sign_message(msg, dkim_cfg)
+
     try:
         server = smtplib.SMTP(smtp_cfg['host'], smtp_cfg['port'])
         if smtp_cfg.get('use_tls'):
@@ -460,6 +487,7 @@ def interactive_settings(config):
     if 'email' not in config: config['email'] = {}
     if 'smtp' not in config: config['smtp'] = {}
     if 'imap' not in config: config['imap'] = {}
+    if 'dkim' not in config: config['dkim'] = {}
 
     console.print("\n[bold yellow]🔑 Authentication Settings[/bold yellow]")
     config['auth']['email'] = Prompt.ask("[bold blue]Enter your email[/bold blue]", default=config['auth'].get('email', ''))
@@ -475,6 +503,13 @@ def interactive_settings(config):
 
     console.print("\n[bold yellow]🌐 Network Settings[/bold yellow]")
     config['proxy']['use_proxy'] = Confirm.ask("[bold green]Use proxy rotation?[/bold green]", default=config['proxy'].get('use_proxy', False))
+
+    console.print("\n[bold yellow]🔐 DKIM Settings[/bold yellow]")
+    config['dkim']['use_dkim'] = Confirm.ask("[bold green]Enable DKIM signing?[/bold green]", default=config['dkim'].get('use_dkim', False))
+    if config['dkim']['use_dkim']:
+        config['dkim']['domain'] = Prompt.ask("  DKIM Domain", default=config['dkim'].get('domain', ''))
+        config['dkim']['selector'] = Prompt.ask("  DKIM Selector", default=config['dkim'].get('selector', 'default'))
+        config['dkim']['private_key_path'] = Prompt.ask("  Private Key Path", default=config['dkim'].get('private_key_path', 'dkim_private.key'))
 
     console.print("\n[bold yellow]📧 Automation Settings[/bold yellow]")
     config['email']['automated_mode'] = Confirm.ask("[bold green]Enable fully automated mode (no confirmation)?[/bold green]", default=config['email'].get('automated_mode', True))

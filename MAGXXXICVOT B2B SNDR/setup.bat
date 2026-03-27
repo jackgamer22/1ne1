@@ -6,7 +6,7 @@ echo **********************************
 echo.
 echo [1/3] Installing dependencies...
 python -m pip install --upgrade pip
-python -m pip install rich PySocks requests defusedxml playwright htmlmin
+python -m pip install rich PySocks requests defusedxml playwright htmlmin dkimpy
 
 echo.
 echo [2/3] Installing Playwright browsers...
