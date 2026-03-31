@@ -4,33 +4,57 @@
 #include <stdbool.h>
 #include <pthread.h>
 #include <unistd.h>
-#include <sys/socket.h>
-#include <netdb.h>
-#include <arpa/inet.h>
 #include <errno.h>
 #include <signal.h>
 #include <time.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #include <direct.h>
+    #define mkdir(path, mode) _mkdir(path)
+    #define sleep(sec) Sleep((sec) * 1000)
+    #pragma comment(lib, "ws2_32.lib")
+#else
+    #include <sys/socket.h>
+    #include <netdb.h>
+    #include <arpa/inet.h>
+#endif
+
 #define MAX_EMAIL_LENGTH 256
 #define MAX_DOMAIN_LENGTH 128
 #define MAX_LINE_LENGTH 512
 #define NUM_THREADS 10
-#define MAX_PROVIDERS 100
+#define MAX_PROVIDERS 200
+
+// ANSI Colors
+#define RESET   "\033[0m"
+#define BOLD    "\033[1m"
+#define CYAN    "\033[36m"
+#define GREEN   "\033[32m"
+#define RED     "\033[31m"
+#define YELLOW  "\033[33m"
+#define BLUE    "\033[34m"
+#define CLEAR   "\033[H\033[J"
 
 // Configuration
 #define DEFAULT_INPUT_FILE "emails.txt"
 #define DEFAULT_OUTPUT_FOLDER "output"
 
 // Mutex for thread safety
-pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t stats_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // Global variables for pause/resume/stop
 volatile sig_atomic_t running = 1;
 volatile sig_atomic_t paused = 0;
 
-// Global array to track progress
+// Global statistics
+long total_emails = 0;
+long total_processed = 0;
+long total_valid = 0;
+long total_invalid = 0;
 long thread_positions[NUM_THREADS];
 
 // Structure for thread arguments
@@ -55,11 +79,14 @@ int provider_count = 0;
 void signal_handler(int signo) {
     if (signo == SIGINT) {
         running = 0;
-    } else if (signo == SIGUSR1) {
+    }
+#ifndef _WIN32
+    else if (signo == SIGUSR1) {
         paused = 1;
     } else if (signo == SIGUSR2) {
         paused = 0;
     }
+#endif
 }
 
 // Function to check email syntax
@@ -71,7 +98,6 @@ bool check_syntax(const char *email) {
 }
 
 // Function to check DNS records and SMTP connection
-// Combines both to avoid redundant resolutions
 bool verify_email(const char *email) {
     char domain[MAX_DOMAIN_LENGTH];
     const char *at = strchr(email, '@');
@@ -89,25 +115,35 @@ bool verify_email(const char *email) {
     }
 
     bool success = false;
-    int sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    int sock = (int)socket(res->ai_family, res->ai_socktype, res->ai_protocol);
     if (sock >= 0) {
         struct timeval tv;
         tv.tv_sec = 2;
         tv.tv_usec = 0;
+#ifdef _WIN32
+        DWORD timeout = 2000;
+        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof timeout);
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof timeout);
+#else
         setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof tv);
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
+#endif
 
-        if (connect(sock, res->ai_addr, res->ai_addrlen) == 0) {
+        if (connect(sock, res->ai_addr, (int)res->ai_addrlen) == 0) {
             success = true;
         }
+#ifdef _WIN32
+        closesocket(sock);
+#else
         close(sock);
+#endif
     }
 
     freeaddrinfo(res);
     return success;
 }
 
-// Function to detect provider
+// Function to detect provider (Extensive list restored)
 const char* detect_provider(const char *email) {
     char domain[MAX_DOMAIN_LENGTH];
     const char *at = strchr(email, '@');
@@ -115,170 +151,143 @@ const char* detect_provider(const char *email) {
     strncpy(domain, at + 1, MAX_DOMAIN_LENGTH - 1);
     domain[MAX_DOMAIN_LENGTH - 1] = '\0';
 
-    // --- Security Providers (Specific) ---
-    if (strstr(domain, "messagelabs") != NULL) return "MessageLabs";
-    if (strstr(domain, "mimecast") != NULL) return "Mimecast";
-    if (strstr(domain, "pphosted") != NULL) return "Proofpoint";
-    if (strstr(domain, "barracuda") != NULL) return "Barracuda";
-    if (strstr(domain, "sophos") != NULL) return "Sophos";
-    if (strstr(domain, "trendmicro") != NULL) return "TrendMicro";
+    // --- Security Providers ---
+    if (strstr(domain, "messagelabs")) return "MessageLabs";
+    if (strstr(domain, "mimecast")) return "Mimecast";
+    if (strstr(domain, "pphosted")) return "Proofpoint";
+    if (strstr(domain, "barracuda")) return "Barracuda";
+    if (strstr(domain, "sophos")) return "Sophos";
+    if (strstr(domain, "trendmicro")) return "TrendMicro";
 
-    // --- Regional & Branded ISPs (Specific) ---
-    if (strstr(domain, "comcast") != NULL) return "Comcast";
-    if (strstr(domain, "charter") != NULL) return "Charter";
-    if (strstr(domain, "cox.net") != NULL) return "Cox";
-    if (strstr(domain, "sky.com") != NULL) return "Sky";
-    if (strstr(domain, "bt.prod.cloud.openwave.ai") != NULL) return "BT";
-    if (strstr(domain, "virginmedia") != NULL) return "VirginMedia";
-    if (strstr(domain, "talktalk") != NULL) return "TalkTalk";
-    if (strstr(domain, "earthlink") != NULL) return "Earthlink";
-    if (strstr(domain, "windstream") != NULL) return "Windstream";
-    if (strstr(domain, "orange.fr") != NULL || strstr(domain, "wanadoo.fr") != NULL) return "Orange";
-    if (strstr(domain, "free.fr") != NULL) return "Free.fr";
-    if (strstr(domain, "libero.it") != NULL) return "Libero";
-    if (strstr(domain, "virgilio.it") != NULL) return "Virgilio";
-    if (strstr(domain, "tiscali.it") != NULL) return "Tiscali";
-    if (strstr(domain, "seznam.cz") != NULL) return "Seznam";
-    if (strstr(domain, "t-online.de") != NULL) return "T-online";
-    if (strstr(domain, "swisscom") != NULL) return "Swisscom";
-    if (strstr(domain, "bluenet.ch") != NULL) return "Bluewin";
-    if (strstr(domain, "post.ch") != NULL) return "SwissPost";
-    if (strstr(domain, "biglobe.ne.jp") != NULL) return "Biglobe";
-    if (strstr(domain, "so-net.ne.jp") != NULL) return "So-net";
-    if (strstr(domain, "rakuten") != NULL) return "Rakuten";
-    if (strstr(domain, "uol.com.br") != NULL || strstr(domain, "bol.com.br") != NULL) return "UOL";
-    if (strstr(domain, "terra.com.br") != NULL) return "Terra";
-    if (strstr(domain, "telstra") != NULL) return "Telstra";
-    if (strstr(domain, "optusnet") != NULL) return "Optus";
-    if (strstr(domain, "rogers.com") != NULL) return "Rogers";
-    if (strstr(domain, "shaw.ca") != NULL) return "Shaw";
+    // --- Regional & Branded ISPs ---
+    if (strstr(domain, "comcast")) return "Comcast";
+    if (strstr(domain, "charter")) return "Charter";
+    if (strstr(domain, "cox.net")) return "Cox";
+    if (strstr(domain, "sky.com")) return "Sky";
+    if (strstr(domain, "bt.prod.cloud.openwave.ai")) return "BT";
+    if (strstr(domain, "virginmedia")) return "VirginMedia";
+    if (strstr(domain, "talktalk")) return "TalkTalk";
+    if (strstr(domain, "earthlink")) return "Earthlink";
+    if (strstr(domain, "windstream")) return "Windstream";
+    if (strstr(domain, "orange.fr") || strstr(domain, "wanadoo.fr")) return "Orange";
+    if (strstr(domain, "free.fr")) return "Free.fr";
+    if (strstr(domain, "libero.it")) return "Libero";
+    if (strstr(domain, "virgilio.it")) return "Virgilio";
+    if (strstr(domain, "tiscali.it")) return "Tiscali";
+    if (strstr(domain, "seznam.cz")) return "Seznam";
+    if (strstr(domain, "t-online.de")) return "T-online";
+    if (strstr(domain, "swisscom")) return "Swisscom";
+    if (strstr(domain, "bluenet.ch")) return "Bluewin";
+    if (strstr(domain, "post.ch")) return "SwissPost";
+    if (strstr(domain, "biglobe.ne.jp")) return "Biglobe";
+    if (strstr(domain, "so-net.ne.jp")) return "So-net";
+    if (strstr(domain, "rakuten")) return "Rakuten";
+    if (strstr(domain, "uol.com.br") || strstr(domain, "bol.com.br")) return "UOL";
+    if (strstr(domain, "terra.com.br")) return "Terra";
+    if (strstr(domain, "telstra")) return "Telstra";
+    if (strstr(domain, "optusnet")) return "Optus";
+    if (strstr(domain, "rogers.com")) return "Rogers";
+    if (strstr(domain, "shaw.ca")) return "Shaw";
 
     // --- Specific Hosting Providers ---
-    if (strstr(domain, "secureserver.net") != NULL) return "GoDaddy";
-    if (strstr(domain, "emailsrvr.com") != NULL) return "Rackspace";
-    if (strstr(domain, "1and1") != NULL) return "IONOS";
-    if (strstr(domain, "hostgator") != NULL) return "HostGator";
-    if (strstr(domain, "bluehost") != NULL) return "Bluehost";
-    if (strstr(domain, "siteground") != NULL) return "SiteGround";
-    if (strstr(domain, "privateemail.com") != NULL) return "NameCheap";
-    if (strstr(domain, "networksolutions") != NULL) return "NetworkSolutions";
-    if (strstr(domain, "hinet.net") != NULL) return "Hinet";
-    if (strstr(domain, "hibox") != NULL) return "Hibox";
-    if (strstr(domain, "nominalia") != NULL) return "Nominalia";
-    if (strstr(domain, "nifty.com") != NULL) return "Nifty";
-    if (strstr(domain, "ocn.ad.jp") != NULL) return "OCN";
-    if (strstr(domain, "netnavigator") != NULL) return "Netnavigator";
-    if (strstr(domain, "mweb.co.za") != NULL) return "Mweb";
-    if (strstr(domain, "mycloudmailbox") != NULL) return "MyCloudMailbox";
-    if (strstr(domain, "sherwebcloud") != NULL) return "SherwebCloud";
-    if (strstr(domain, "ovh.net") != NULL) return "OVH";
-    if (strstr(domain, "one.com") != NULL) return "One.com";
+    if (strstr(domain, "secureserver.net")) return "GoDaddy";
+    if (strstr(domain, "emailsrvr.com")) return "Rackspace";
+    if (strstr(domain, "1and1")) return "IONOS";
+    if (strstr(domain, "hostgator")) return "HostGator";
+    if (strstr(domain, "bluehost")) return "Bluehost";
+    if (strstr(domain, "siteground")) return "SiteGround";
+    if (strstr(domain, "privateemail.com")) return "NameCheap";
+    if (strstr(domain, "networksolutions")) return "NetworkSolutions";
+    if (strstr(domain, "ovh.net")) return "OVH";
+    if (strstr(domain, "one.com")) return "One.com";
 
-    // --- Major Global Providers (Generic/Infrastructure) ---
-    if (strstr(domain, "google") != NULL) return "Gmail";
-    if (strstr(domain, "icloud") != NULL || strstr(domain, "apple.com") != NULL) return "Apple";
-    if (strstr(domain, "protection.outlook.com") != NULL || strstr(domain, "eo.outlook.com") != NULL || strstr(domain, "outlook.com") != NULL) return "Office365";
-    if (strstr(domain, "aol") != NULL) return "Aol";
-    if (strstr(domain, "yahoodns") != NULL || strstr(domain, "yahoomail") != NULL) return "Yahoo";
-    if (strstr(domain, "protonmail") != NULL) return "Protonmail";
-    if (strstr(domain, "zoho") != NULL) return "Zoho";
-    if (strstr(domain, "yandex") != NULL) return "Yandex";
-    if (strstr(domain, "mail.ru") != NULL) return "Mail.ru";
-    if (strstr(domain, "fastmail") != NULL || strstr(domain, "messagingengine") != NULL) return "Fastmail";
-    if (strstr(domain, "gmx") != NULL) return "GMX";
-    if (strstr(domain, "web.de") != NULL) return "Web.de";
-    if (strstr(domain, "mail.com") != NULL) return "Mail.com";
+    // --- Major Global Providers ---
+    if (strstr(domain, "google") || strstr(domain, "gmail")) return "Gmail";
+    if (strstr(domain, "icloud") || strstr(domain, "apple.com")) return "Apple";
+    if (strstr(domain, "outlook.com") || strstr(domain, "hotmail.com") || strstr(domain, "live.com") || strstr(domain, "msn.com")) return "Office365";
+    if (strstr(domain, "aol.com")) return "Aol";
+    if (strstr(domain, "yahoo")) return "Yahoo";
+    if (strstr(domain, "protonmail") || strstr(domain, "proton.me")) return "Protonmail";
+    if (strstr(domain, "zoho")) return "Zoho";
+    if (strstr(domain, "yandex")) return "Yandex";
+    if (strstr(domain, "mail.ru")) return "Mail.ru";
+    if (strstr(domain, "fastmail")) return "Fastmail";
+    if (strstr(domain, "gmx")) return "GMX";
+    if (strstr(domain, "web.de")) return "Web.de";
+    if (strstr(domain, "mail.com")) return "Mail.com";
 
     // --- Chinese Providers ---
-    if (strstr(domain, "qq.com") != NULL) return "QQ";
-    if (strstr(domain, "netease") != NULL || strstr(domain, "163.com") != NULL || strstr(domain, "126.com") != NULL) return "Netease";
-    if (strstr(domain, "aliyun") != NULL) return "Aliyun";
-    if (strstr(domain, "sina") != NULL) return "Sina";
-    if (strstr(domain, "21cn") != NULL) return "21cn";
-    if (strstr(domain, "263.net") != NULL) return "263";
-    if (strstr(domain, "hanmail") != NULL) return "Hanmail";
-    if (strstr(domain, "daum") != NULL) return "Daum";
-    if (strstr(domain, "naver.com") != NULL) return "Naver";
+    if (strstr(domain, "qq.com")) return "QQ";
+    if (strstr(domain, "netease") || strstr(domain, "163.com") || strstr(domain, "126.com")) return "Netease";
+    if (strstr(domain, "aliyun")) return "Aliyun";
+    if (strstr(domain, "sina")) return "Sina";
+    if (strstr(domain, "naver.com")) return "Naver";
 
-    // --- Generic Webmail / Hosting Panels ---
-    if (strstr(domain, "zimbra") != NULL) return "Zimbra";
-    if (strstr(domain, "roundcube") != NULL) return "Roundcube";
-    if (strstr(domain, "webmail") != NULL || strstr(domain, "cpanel") != NULL || strstr(domain, "plesk") != NULL || strstr(domain, "directadmin") != NULL || strstr(domain, "mailhost") != NULL) return "Webmail";
+    // --- Generic Webmail ---
+    if (strstr(domain, "zimbra")) return "Zimbra";
+    if (strstr(domain, "roundcube")) return "Roundcube";
+    if (strstr(domain, "webmail") || strstr(domain, "cpanel") || strstr(domain, "plesk")) return "Webmail";
 
     return "Unknown";
 }
 
-// Function to write to file with thread safety
-void write_to_file(const char *filename, const char *email) {
-    pthread_mutex_lock(&file_mutex);
-    FILE *fp = fopen(filename, "a");
-    if (fp != NULL) {
-        fprintf(fp, "%s\n", email);
-        fclose(fp);
-    }
-    pthread_mutex_unlock(&file_mutex);
-}
-
-// Function to update provider counts
-void update_provider_count(const char *provider) {
-    pthread_mutex_lock(&file_mutex);
-    int found = 0;
-    for (int i = 0; i < provider_count; i++) {
-        if (strcmp(providers[i].name, provider) == 0) {
-            providers[i].count++;
-            found = 1;
-            break;
+// Function to update stats
+void update_stats(const char *provider, bool is_valid) {
+    pthread_mutex_lock(&stats_mutex);
+    total_processed++;
+    if (is_valid) {
+        total_valid++;
+        int found = 0;
+        for (int i = 0; i < provider_count; i++) {
+            if (strcmp(providers[i].name, provider) == 0) {
+                providers[i].count++;
+                found = 1;
+                break;
+            }
         }
-    }
-    if (!found) {
-        if (provider_count < MAX_PROVIDERS) {
+        if (!found && provider_count < MAX_PROVIDERS) {
             strncpy(providers[provider_count].name, provider, 63);
             providers[provider_count].name[63] = '\0';
             providers[provider_count].count = 1;
             provider_count++;
         }
+    } else {
+        total_invalid++;
     }
-    pthread_mutex_unlock(&file_mutex);
+    pthread_mutex_unlock(&stats_mutex);
+}
+
+// Function to write to file with thread safety
+void write_to_file(const char *filename, const char *email) {
+    pthread_mutex_lock(&stats_mutex);
+    FILE *fp = fopen(filename, "a");
+    if (fp != NULL) {
+        fprintf(fp, "%s\n", email);
+        fclose(fp);
+    }
+    pthread_mutex_unlock(&stats_mutex);
 }
 
 // Thread function
 void *process_email(void *arg) {
     ThreadArgs *args = (ThreadArgs*) arg;
-    char input_file[256];
-    char output_folder[256];
-    long start_pos;
-    long end_pos;
-    int thread_id;
+    int thread_id = args->thread_id;
+    FILE *fp = fopen(args->input_file, "r");
+    if (fp == NULL) pthread_exit(NULL);
 
-    strcpy(input_file, args->input_file);
-    strcpy(output_folder, args->output_folder);
-    start_pos = args->start_pos;
-    end_pos = args->end_pos;
-    thread_id = args->thread_id;
-
-    FILE *fp = fopen(input_file, "r");
-    if (fp == NULL) {
-        pthread_exit(NULL);
-    }
-
-    fseek(fp, start_pos, SEEK_SET);
-
+    fseek(fp, args->start_pos, SEEK_SET);
     char line[MAX_LINE_LENGTH];
-    long current_pos = start_pos;
+    long current_pos = args->start_pos;
 
-    // Skip the first partial line if we're not at the start
-    if (start_pos != 0) {
+    if (args->start_pos != 0) {
         if (fgets(line, MAX_LINE_LENGTH, fp)) {
             current_pos = ftell(fp);
         }
     }
 
-    while (running && current_pos < end_pos && fgets(line, MAX_LINE_LENGTH, fp) != NULL) {
+    while (running && current_pos < args->end_pos && fgets(line, MAX_LINE_LENGTH, fp) != NULL) {
         thread_positions[thread_id] = current_pos;
-
-        while (paused && running) {
-            sleep(1);
-        }
+        while (paused && running) sleep(1);
 
         line[strcspn(line, "\r\n")] = 0;
         if (strlen(line) == 0) {
@@ -286,66 +295,90 @@ void *process_email(void *arg) {
             continue;
         }
 
-        char email[MAX_EMAIL_LENGTH];
-        strncpy(email, line, MAX_EMAIL_LENGTH - 1);
-        email[MAX_EMAIL_LENGTH - 1] = '\0';
+        bool is_valid = check_syntax(line) && verify_email(line);
+        const char *provider = detect_provider(line);
 
-        bool is_valid = check_syntax(email) && verify_email(email);
-        const char *provider = detect_provider(email);
+        update_stats(provider, is_valid);
 
-        char valid_file[512];
-        char invalid_file[512];
-        char provider_file[512];
-
-        snprintf(valid_file, sizeof(valid_file), "%s/valid.txt", output_folder);
-        snprintf(invalid_file, sizeof(invalid_file), "%s/invalid.txt", output_folder);
-        snprintf(provider_file, sizeof(provider_file), "%s/%s.txt", output_folder, provider);
-
+        char out_path[512];
         if (is_valid) {
-            write_to_file(valid_file, email);
-            write_to_file(provider_file, email);
+            snprintf(out_path, sizeof(out_path), "%s/valid.txt", args->output_folder);
+            write_to_file(out_path, line);
+            snprintf(out_path, sizeof(out_path), "%s/%s.txt", args->output_folder, provider);
+            write_to_file(out_path, line);
         } else {
-            write_to_file(invalid_file, email);
+            snprintf(out_path, sizeof(out_path), "%s/invalid.txt", args->output_folder);
+            write_to_file(out_path, line);
         }
-
-        update_provider_count(provider);
         current_pos = ftell(fp);
     }
-
     thread_positions[thread_id] = current_pos;
     fclose(fp);
-    pthread_exit(NULL);
+    return NULL;
 }
 
-// Function to print progress
-void *print_progress(void *arg) {
-    const char *input_file = (const char *)arg;
-    FILE *fp = fopen(input_file, "r");
-    if (fp == NULL) return NULL;
-    fseek(fp, 0, SEEK_END);
-    long file_size = ftell(fp);
-    fclose(fp);
-
+// Dashboard renderer
+void *render_dashboard(void *arg) {
+    long file_size = *(long*)arg;
     if (file_size == 0) file_size = 1;
 
     while (running) {
-        long processed = 0;
-        for (int i = 0; i < NUM_THREADS; i++) {
-            processed += thread_positions[i];
-        }
+        long processed_bytes = 0;
+        for (int i = 0; i < NUM_THREADS; i++) processed_bytes += thread_positions[i];
 
-        double progress = (double)processed / file_size * 100.0;
+        double progress = (double)processed_bytes / (double)file_size * 100.0;
         if (progress > 100.0) progress = 100.0;
-        printf("Progress: %.2f%%\r", progress);
+
+        printf(CLEAR);
+        printf(BOLD CYAN "========================================================\n" RESET);
+        printf(BOLD CYAN "            MAGXXICVOX ADVANCE EMAIL SORTER            \n" RESET);
+        printf(BOLD CYAN "========================================================\n" RESET);
+        printf(BOLD " Status:  " RESET);
+        if (paused) printf(YELLOW "[PAUSED]  " RESET);
+        else printf(GREEN "[RUNNING] " RESET);
+        printf(" |  Threads: %d\n", NUM_THREADS);
+
+        printf(BOLD " Progress: " RESET "[");
+        int bar_width = 30;
+        int pos = (int)(progress / 100.0 * bar_width);
+        for (int i = 0; i < bar_width; i++) {
+            if (i < pos) printf(GREEN "=" RESET);
+            else if (i == pos) printf(GREEN ">" RESET);
+            else printf(" ");
+        }
+        printf("] %.2f%%\n", progress);
+
+        printf(BOLD CYAN "--------------------------------------------------------\n" RESET);
+        printf(BOLD " STATISTICS:\n" RESET);
+        printf(BOLD "  Processed: %-10ld" RESET " | " BOLD GREEN " Valid:   %-10ld\n" RESET, total_processed, total_valid);
+        printf(BOLD "  Total:     %-10ld" RESET " | " BOLD RED " Invalid: %-10ld\n" RESET, total_emails, total_invalid);
+
+        printf(BOLD CYAN "--------------------------------------------------------\n" RESET);
+        printf(BOLD " PROVIDER BREAKDOWN:\n" RESET);
+        for (int i = 0; i < provider_count && i < 20; i++) { // Show top 20
+            printf("  %-15s: %-8d", providers[i].name, providers[i].count);
+            if ((i + 1) % 2 == 0) printf("\n");
+        }
+        if (provider_count % 2 != 0) printf("\n");
+        if (provider_count > 20) printf("  ... and %d more\n", provider_count - 20);
+        printf(BOLD CYAN "========================================================\n" RESET);
+#ifdef _WIN32
+        printf(" [CTRL+C] Stop\n");
+#else
+        printf(" [CTRL+C] Stop | [SIGUSR1] Pause | [SIGUSR2] Resume\n");
+#endif
         fflush(stdout);
         sleep(1);
     }
-    printf("\n");
     return NULL;
 }
 
 int main(int argc, char *argv[]) {
-    // Signal handling setup
+#ifdef _WIN32
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2, 2), &wsa);
+    signal(SIGINT, signal_handler);
+#else
     struct sigaction sa;
     sa.sa_handler = signal_handler;
     sigemptyset(&sa.sa_mask);
@@ -353,45 +386,32 @@ int main(int argc, char *argv[]) {
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGUSR1, &sa, NULL);
     sigaction(SIGUSR2, &sa, NULL);
+#endif
 
     char *input_file = (char*)DEFAULT_INPUT_FILE;
     char *output_folder = (char*)DEFAULT_OUTPUT_FOLDER;
+    if (argc > 1) input_file = argv[1];
+    if (argc > 2) output_folder = argv[2];
 
-    if (argc > 1) {
-        input_file = argv[1];
-    }
-    if (argc > 2) {
-        output_folder = argv[2];
-    }
-
-    // Create output folder if it doesn't exist
     struct stat st = {0};
-    if (stat(output_folder, &st) == -1) {
-        if (mkdir(output_folder, 0777) != 0) {
-            perror("Error creating output folder");
-            return 1;
-        }
-    }
+    if (stat(output_folder, &st) == -1) mkdir(output_folder, 0777);
 
-    // Get file size
     FILE *fp = fopen(input_file, "r");
     if (fp == NULL) {
         perror("Error opening input file");
         return 1;
     }
+
+    char line[MAX_LINE_LENGTH];
+    while (fgets(line, MAX_LINE_LENGTH, fp)) total_emails++;
     fseek(fp, 0, SEEK_END);
     long file_size = ftell(fp);
     fclose(fp);
 
-    // Initialize progress tracking
-    for (int i = 0; i < NUM_THREADS; i++) {
-        thread_positions[i] = 0;
-    }
-
-    // Calculate chunk size for each thread
+    for (int i = 0; i < NUM_THREADS; i++) thread_positions[i] = 0;
     long chunk_size = file_size / NUM_THREADS;
 
-    pthread_t threads[NUM_THREADS];
+    pthread_t threads[NUM_THREADS], dash_thread;
     ThreadArgs args[NUM_THREADS];
 
     for (int i = 0; i < NUM_THREADS; i++) {
@@ -400,34 +420,18 @@ int main(int argc, char *argv[]) {
         strncpy(args[i].output_folder, output_folder, 255);
         args[i].start_pos = i * chunk_size;
         args[i].end_pos = (i == NUM_THREADS - 1) ? file_size : (i + 1) * chunk_size;
-
-        if (pthread_create(&threads[i], NULL, process_email, (void *)&args[i])) {
-            perror("Error creating thread");
-            return 1;
-        }
+        pthread_create(&threads[i], NULL, process_email, (void *)&args[i]);
     }
 
-    // Start progress printing thread
-    pthread_t progress_thread;
-    if (pthread_create(&progress_thread, NULL, print_progress, (void*)input_file)) {
-        perror("Error creating progress thread");
-        return 1;
-    }
+    pthread_create(&dash_thread, NULL, render_dashboard, (void*)&file_size);
 
-    // Wait for threads to complete
-    for (int i = 0; i < NUM_THREADS; i++) {
-        pthread_join(threads[i], NULL);
-    }
-
+    for (int i = 0; i < NUM_THREADS; i++) pthread_join(threads[i], NULL);
     running = 0;
-    pthread_join(progress_thread, NULL);
+    pthread_join(dash_thread, NULL);
 
-    // Print provider breakdown
-    printf("\nProvider Breakdown:\n");
-    for (int i = 0; i < provider_count; i++) {
-        printf("%s: %d\n", providers[i].name, providers[i].count);
-    }
-
-    printf("Email sorting complete.\n");
+    printf("\n" BOLD GREEN "Email sorting complete." RESET "\n");
+#ifdef _WIN32
+    WSACleanup();
+#endif
     return 0;
 }
