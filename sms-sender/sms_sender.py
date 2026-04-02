@@ -3,6 +3,8 @@ import time
 import logging
 import random
 import os
+from collections import deque
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 from rich.live import Live
@@ -30,7 +32,8 @@ class SMSSender:
         self.session = requests.Session()
         self.session.headers.update({'User-Agent': self.get_random_user_agent()})
         self.stats = {"sent": 0, "success": 0, "fail": 0}
-        self.logs = []
+        # Cap the logs to 100 entries using deque for efficient memory management
+        self.logs = deque(maxlen=100)
 
     def get_random_user_agent(self):
         user_agents = [
@@ -59,6 +62,9 @@ class SMSSender:
 
             elif self.api_service == 'twilio':
                 from twilio.rest import Client
+                # Twilio key format should be SID:AuthToken
+                if ":" not in self.api_key:
+                    return False, "Invalid Twilio Key Format (SID:Token required)"
                 sid, token = self.api_key.split(':')
                 client = Client(sid, token)
                 message_resp = client.messages.create(to=recipient, from_=self.sender_id, body=message)
@@ -129,13 +135,16 @@ class SMSSender:
             time.sleep(sleep_time)
 
     def generate_dashboard(self):
+        # Create Table
         table = Table(show_header=True, header_style="bold magenta", expand=True)
         table.add_column("ID", style="dim", width=6)
         table.add_column("Recipient", style="cyan", width=20)
         table.add_column("Status", justify="center", width=12)
         table.add_column("Detail", style="white")
 
-        for log in self.logs[-10:]:
+        # Display the most recent 10 entries from our deque
+        logs_list = list(self.logs)
+        for log in logs_list[-10:]:
             status_style = "bold green" if log['status'] == "Success" else "bold red"
             table.add_row(
                 str(log['id']),
@@ -144,6 +153,7 @@ class SMSSender:
                 log['detail']
             )
 
+        # Summary string
         summary = (
             f"[bold blue]Total Sent:[/] {self.stats['sent']}   "
             f"[bold green]Success:[/] {self.stats['success']}   "
@@ -151,6 +161,7 @@ class SMSSender:
             f"[bold yellow]Delay:[/] {self.rate_limit}s"
         )
 
+        # Use a Layout to arrange table and summary
         layout = Layout()
         layout.split(
             Layout(table, name="table"),
@@ -166,6 +177,10 @@ class SMSSender:
         )
 
 if __name__ == '__main__':
+    # Load environment variables from .env if it exists
+    env_path = os.path.join(os.path.dirname(__file__), '.env')
+    load_dotenv(dotenv_path=env_path)
+
     console = Console()
     console.print(BANNER, style="bold yellow")
 
@@ -174,8 +189,8 @@ if __name__ == '__main__':
     sender_id = os.getenv('SMS_SENDER_ID', '')
 
     if not api_key:
-        api_key_input = console.input("[bold yellow]Enter your API KEY (leave blank for 'textbelt' free tier): [/]")
-        api_key = api_key_input.strip() if api_key_input.strip() else 'textbelt'
+        api_key_input = console.input("[bold yellow]No API key found. Enter paid key (blank for 'text' free tier): [/]")
+        api_key = api_key_input.strip() if api_key_input.strip() else 'text'
 
     try:
         default_delay = float(os.getenv('SMS_DELAY', '1.0'))
@@ -189,22 +204,33 @@ if __name__ == '__main__':
         console.print("[bold red]Invalid input! Using default delay.[/]")
         delay = default_delay
 
+    # Load numbers from numbers.txt
     numbers_file = os.path.join(os.path.dirname(__file__), 'numbers.txt')
     if os.path.exists(numbers_file):
         with open(numbers_file, 'r') as f:
             recipient_list = [line.strip() for line in f if line.strip()]
     else:
-        recipient_list = os.getenv('SMS_RECIPIENTS', '').split(',')
+        # Check environment variable if file is missing
+        recipient_env = os.getenv('SMS_RECIPIENTS', '')
+        if recipient_env:
+            recipient_list = recipient_env.split(',')
+        else:
+            console.print("[bold red][ERROR] No recipients found! Populate numbers.txt or set SMS_RECIPIENTS env var.[/]")
+            recipient_list = []
 
+    # Load message from message.txt
     message_file = os.path.join(os.path.dirname(__file__), 'message.txt')
     if os.path.exists(message_file):
         with open(message_file, 'r') as f:
             message_text = f.read().strip()
     else:
-        message_text = os.getenv('SMS_MESSAGE', 'Hello from MagxxxicVot SMS XII V6!')
+        message_text = os.getenv('SMS_MESSAGE', '')
+        if not message_text:
+            console.print("[bold red][ERROR] No message text found! Populate message.txt or set SMS_MESSAGE env var.[/]")
+            message_text = ""
 
-    if not recipient_list or not recipient_list[0]:
-        console.print("[bold red]No recipients configured![/]")
+    if not recipient_list or not message_text:
+        console.print("[bold red]Fatal error: Configuration incomplete. Halting.[/]")
     else:
         sms_sender = SMSSender(api_service, api_key, sender_id, rate_limit=delay)
         with Live(sms_sender.generate_dashboard(), refresh_per_second=4, screen=False) as live:

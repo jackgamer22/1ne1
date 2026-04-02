@@ -7,6 +7,9 @@ if %errorlevel% neq 0 (
     exit /b
 )
 
+echo Upgrading pip...
+python -m pip install --upgrade pip
+
 echo Installing dependencies...
 pip install -r requirements.txt
 if %errorlevel% neq 0 (
