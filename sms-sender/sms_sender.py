@@ -7,6 +7,14 @@ import os
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+BANNER = """
+***************************************************
+*                                                 *
+*       MagxxxicVot SMS XII V6                    *
+*                                                 *
+***************************************************
+"""
+
 class SMSSender:
     def __init__(self, api_service, api_key, sender_id, rate_limit=1):
         """
@@ -141,16 +149,30 @@ class SMSSender:
         logging.info(f"Finished bulk processing. Successful: {successful_sends}, Failed: {failed_sends}")
 
 if __name__ == '__main__':
+    print(BANNER)
     # Usage example using environment variables
     api_service = os.getenv('SMS_API_SERVICE', 'textbelt')
     api_key = os.getenv('SMS_API_KEY', 'textbelt')  # Use 'textbelt' for free tier
     sender_id = os.getenv('SMS_SENDER_ID', '')
 
-    recipient_list = os.getenv('SMS_RECIPIENTS', '').split(',')
-    message_text = os.getenv('SMS_MESSAGE', 'Hello from the SMS Sender!')
+    # Try to load numbers from numbers.txt
+    numbers_file = os.path.join(os.path.dirname(__file__), 'numbers.txt')
+    if os.path.exists(numbers_file):
+        with open(numbers_file, 'r') as f:
+            recipient_list = [line.strip() for line in f if line.strip()]
+    else:
+        recipient_list = os.getenv('SMS_RECIPIENTS', '').split(',')
+
+    # Try to load message from message.txt
+    message_file = os.path.join(os.path.dirname(__file__), 'message.txt')
+    if os.path.exists(message_file):
+        with open(message_file, 'r') as f:
+            message_text = f.read().strip()
+    else:
+        message_text = os.getenv('SMS_MESSAGE', 'Hello from MagxxxicVot SMS XII V6!')
 
     if not recipient_list or not recipient_list[0]:
-        logging.error("No recipients configured. Set SMS_RECIPIENTS environment variable.")
+        logging.error("No recipients configured. Set SMS_RECIPIENTS environment variable or populate numbers.txt.")
     else:
         sms_sender = SMSSender(api_service, api_key, sender_id)
         sms_sender.process_messages(recipient_list, message_text)
