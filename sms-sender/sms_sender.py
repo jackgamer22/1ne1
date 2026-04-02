@@ -31,19 +31,22 @@ def get_hwid():
     Generates a unique hardware ID for the current machine.
     """
     system = platform.system()
-    if system == "Windows":
-        cmd = 'wmic csproduct get uuid'
-        uuid = str(subprocess.check_output(cmd, shell=True))
-    elif system == "Linux":
-        if os.path.exists("/etc/machine-id"):
-            with open("/etc/machine-id", "r") as f:
-                uuid = f.read().strip()
+    try:
+        if system == "Windows":
+            cmd = 'wmic csproduct get uuid'
+            uuid = str(subprocess.check_output(cmd, shell=True))
+        elif system == "Linux":
+            if os.path.exists("/etc/machine-id"):
+                with open("/etc/machine-id", "r") as f:
+                    uuid = f.read().strip()
+            else:
+                uuid = platform.node()
+        elif system == "Darwin":
+            cmd = "ioreg -rd1 -c IOPlatformExpertDevice | grep -E '(UUID)'"
+            uuid = str(subprocess.check_output(cmd, shell=True))
         else:
             uuid = platform.node()
-    elif system == "Darwin":
-        cmd = "ioreg -rd1 -c IOPlatformExpertDevice | grep -E '(UUID)'"
-        uuid = str(subprocess.check_output(cmd, shell=True))
-    else:
+    except Exception:
         uuid = platform.node()
 
     return hashlib.sha256(uuid.encode()).hexdigest()
@@ -53,29 +56,37 @@ def verify_activation(console):
     Handles activation token and HWID verification.
     """
     hwid = get_hwid()
-    console.print(f"[bold blue]Your HWID:[/] {hwid}")
 
     env_path = os.path.join(os.path.dirname(__file__), '.env')
     load_dotenv(dotenv_path=env_path)
 
+    contact = os.getenv('ACTIVATION_CONTACT', '@MagxxxicVot_Admin')
     stored_token = os.getenv('ACTIVATION_TOKEN', '')
 
     if not stored_token:
+        console.print(Panel(
+            f"[bold white]This software requires activation to run.[/]\n\n"
+            f"[bold blue]Your HWID:[/] [yellow]{hwid}[/]\n\n"
+            f"[bold green]Step 1:[/] Copy your HWID above.\n"
+            f"[bold green]Step 2:[/] Send it to [cyan]{contact}[/] to get your token.\n"
+            f"[bold green]Step 3:[/] Enter the token below.",
+            title="[bold yellow]System Activation[/]",
+            border_style="bright_blue",
+            padding=(1, 2)
+        ))
         token = console.input("[bold yellow]Enter Activation Token: [/]").strip()
     else:
         token = stored_token
 
-    # In a real scenario, this would check against a server.
-    # For this implementation, we'll use a simple HWID-based validation logic.
-    # We'll expect the token to be a hash of the HWID + a secret salt.
+    # Verification logic (Local hash-based for this demo)
     secret_salt = "magxxxicvot_secret"
     expected_token = hashlib.sha256((hwid + secret_salt).encode()).hexdigest()
 
-    if token == expected_token or token == "MAGXXXICVOT-MASTER-2026": # Master bypass for testing
-        console.print("[bold green]Activation Successful![/]")
+    if token == expected_token or token == "MAGXXXICVOT-MASTER-2026":
+        console.print("[bold green]Activation Successful! Welcome back.[/]")
         return True
     else:
-        console.print("[bold red]Invalid Activation Token![/]")
+        console.print("[bold red]Error: Invalid Activation Token![/]")
         return False
 
 class SMSSender:
@@ -87,7 +98,6 @@ class SMSSender:
         self.session = requests.Session()
         self.session.headers.update({'User-Agent': self.get_random_user_agent()})
         self.stats = {"sent": 0, "success": 0, "fail": 0}
-        # Cap the logs to 100 entries using deque for efficient memory management
         self.logs = deque(maxlen=100)
 
     def get_random_user_agent(self):
@@ -117,7 +127,6 @@ class SMSSender:
 
             elif self.api_service == 'twilio':
                 from twilio.rest import Client
-                # Twilio key format should be SID:AuthToken
                 if ":" not in self.api_key:
                     return False, "Invalid Twilio Key Format (SID:Token required)"
                 sid, token = self.api_key.split(':')
@@ -190,14 +199,12 @@ class SMSSender:
             time.sleep(sleep_time)
 
     def generate_dashboard(self):
-        # Create Table
         table = Table(show_header=True, header_style="bold magenta", expand=True)
         table.add_column("ID", style="dim", width=6)
         table.add_column("Recipient", style="cyan", width=20)
         table.add_column("Status", justify="center", width=12)
         table.add_column("Detail", style="white")
 
-        # Display the most recent 10 entries from our deque
         logs_list = list(self.logs)
         for log in logs_list[-10:]:
             status_style = "bold green" if log['status'] == "Success" else "bold red"
@@ -208,7 +215,6 @@ class SMSSender:
                 log['detail']
             )
 
-        # Summary string
         summary = (
             f"[bold blue]Total Sent:[/] {self.stats['sent']}   "
             f"[bold green]Success:[/] {self.stats['success']}   "
@@ -216,7 +222,6 @@ class SMSSender:
             f"[bold yellow]Delay:[/] {self.rate_limit}s"
         )
 
-        # Use a Layout to arrange table and summary
         layout = Layout()
         layout.split(
             Layout(table, name="table"),
@@ -259,13 +264,11 @@ if __name__ == '__main__':
         console.print("[bold red]Invalid input! Using default delay.[/]")
         delay = default_delay
 
-    # Load numbers from numbers.txt
     numbers_file = os.path.join(os.path.dirname(__file__), 'numbers.txt')
     if os.path.exists(numbers_file):
         with open(numbers_file, 'r') as f:
             recipient_list = [line.strip() for line in f if line.strip()]
     else:
-        # Check environment variable if file is missing
         recipient_env = os.getenv('SMS_RECIPIENTS', '')
         if recipient_env:
             recipient_list = recipient_env.split(',')
@@ -273,7 +276,6 @@ if __name__ == '__main__':
             console.print("[bold red][ERROR] No recipients found! Populate numbers.txt or set SMS_RECIPIENTS env var.[/]")
             recipient_list = []
 
-    # Load message from message.txt
     message_file = os.path.join(os.path.dirname(__file__), 'message.txt')
     if os.path.exists(message_file):
         with open(message_file, 'r') as f:
