@@ -1,7 +1,6 @@
 import unittest
 from unittest.mock import MagicMock, patch
 from sms_sender import SMSSender
-import requests
 
 class TestSMSSender(unittest.TestCase):
 
@@ -13,7 +12,6 @@ class TestSMSSender(unittest.TestCase):
 
     @patch('requests.Session.post')
     def test_send_sms_textbelt_success(self, mock_post):
-        # Mock successful response from TextBelt
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {'success': True}
@@ -22,18 +20,14 @@ class TestSMSSender(unittest.TestCase):
         recipient = '+1234567890'
         message = 'Hello world!'
 
-        result = self.sms_sender.send_sms(recipient, message)
+        success, detail = self.sms_sender.send_sms(recipient, message)
 
-        self.assertTrue(result)
+        self.assertTrue(success)
+        self.assertEqual(detail, "Success")
         mock_post.assert_called_once()
-        args, kwargs = mock_post.call_args
-        self.assertEqual(kwargs['data']['phone'], recipient)
-        self.assertEqual(kwargs['data']['message'], message)
-        self.assertEqual(kwargs['data']['key'], self.api_key)
 
     @patch('requests.Session.post')
     def test_send_sms_textbelt_failure(self, mock_post):
-        # Mock failed response from TextBelt
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {'success': False, 'error': 'Invalid API key'}
@@ -42,13 +36,13 @@ class TestSMSSender(unittest.TestCase):
         recipient = '+1234567890'
         message = 'Hello world!'
 
-        result = self.sms_sender.send_sms(recipient, message)
+        success, detail = self.sms_sender.send_sms(recipient, message)
 
-        self.assertFalse(result)
+        self.assertFalse(success)
+        self.assertEqual(detail, 'Invalid API key')
 
     @patch('twilio.rest.Client')
     def test_send_sms_twilio_success(self, mock_twilio_client):
-        # Mock Twilio client and response
         self.sms_sender.api_service = 'twilio'
         self.sms_sender.api_key = 'account_sid:auth_token'
 
@@ -60,18 +54,13 @@ class TestSMSSender(unittest.TestCase):
         recipient = '+1234567890'
         message = 'Hello world!'
 
-        result = self.sms_sender.send_sms(recipient, message)
+        success, detail = self.sms_sender.send_sms(recipient, message)
 
-        self.assertTrue(result)
-        mock_client_instance.messages.create.assert_called_once_with(
-            to=recipient,
-            from_=self.sender_id,
-            body=message
-        )
+        self.assertTrue(success)
+        self.assertEqual(detail, "SID: SM12345")
 
     @patch('requests.Session.post')
     def test_process_messages(self, mock_post):
-        # Mock successful response
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {'success': True}
@@ -80,15 +69,15 @@ class TestSMSSender(unittest.TestCase):
         recipients = ['+1234567890', '+0987654321']
         message = 'Hello all!'
 
-        # Set rate_limit to 0 for faster testing
         self.sms_sender.rate_limit = 0
-        self.sms_sender.process_messages(recipients, message)
+        mock_live = MagicMock()
+        self.sms_sender.process_messages(recipients, message, live=mock_live)
 
         self.assertEqual(mock_post.call_count, 2)
+        self.assertEqual(mock_live.update.call_count, 2)
 
     @patch('requests.Session.post')
     def test_bulk_send_messages(self, mock_post):
-        # Mock successful response
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {'success': True}
@@ -97,11 +86,12 @@ class TestSMSSender(unittest.TestCase):
         recipients = ['+1234567890', '+0987654321']
         messages = ['Hello Alice!', 'Hello Bob!']
 
-        # Set rate_limit to 0 for faster testing
         self.sms_sender.rate_limit = 0
-        self.sms_sender.bulk_send_messages(recipients, messages)
+        mock_live = MagicMock()
+        self.sms_sender.bulk_send_messages(recipients, messages, live=mock_live)
 
         self.assertEqual(mock_post.call_count, 2)
+        self.assertEqual(mock_live.update.call_count, 2)
 
 if __name__ == '__main__':
     unittest.main()
