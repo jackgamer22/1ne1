@@ -53,17 +53,27 @@ def get_hwid():
 
 def verify_activation(console):
     """
-    Handles activation token and HWID verification.
+    Handles activation token and HWID verification with persistence.
     """
     hwid = get_hwid()
+    activation_file = os.path.join(os.path.dirname(__file__), 'activation.sys')
 
     env_path = os.path.join(os.path.dirname(__file__), '.env')
     load_dotenv(dotenv_path=env_path)
 
     contact = os.getenv('ACTIVATION_CONTACT', '@MagxxxicVot_Admin')
-    stored_token = os.getenv('ACTIVATION_TOKEN', '')
 
-    if not stored_token:
+    # Try loading from activation.sys first
+    token = ""
+    if os.path.exists(activation_file):
+        with open(activation_file, 'r') as f:
+            token = f.read().strip()
+
+    # If not in file, check environment
+    if not token:
+        token = os.getenv('ACTIVATION_TOKEN', '')
+
+    if not token:
         console.print(Panel(
             f"[bold white]This software requires activation to run.[/]\n\n"
             f"[bold blue]Your HWID:[/] [yellow]{hwid}[/]\n\n"
@@ -75,18 +85,23 @@ def verify_activation(console):
             padding=(1, 2)
         ))
         token = console.input("[bold yellow]Enter Activation Token: [/]").strip()
-    else:
-        token = stored_token
 
-    # Verification logic (Local hash-based for this demo)
+    # Verification logic
     secret_salt = "magxxxicvot_secret"
     expected_token = hashlib.sha256((hwid + secret_salt).encode()).hexdigest()
 
     if token == expected_token or token == "MAGXXXICVOT-MASTER-2026":
+        # Save token for future use if not already saved
+        if not os.path.exists(activation_file) or (os.path.exists(activation_file) and token != open(activation_file).read().strip()):
+             with open(activation_file, 'w') as f:
+                f.write(token)
         console.print("[bold green]Activation Successful! Welcome back.[/]")
         return True
     else:
         console.print("[bold red]Error: Invalid Activation Token![/]")
+        # Delete invalid token file if it exists
+        if os.path.exists(activation_file):
+            os.remove(activation_file)
         return False
 
 class SMSSender:
@@ -244,13 +259,27 @@ if __name__ == '__main__':
         time.sleep(3)
         exit(1)
 
-    api_service = os.getenv('SMS_API_SERVICE', 'textbelt')
-    api_key = os.getenv('SMS_API_KEY', '')
-    sender_id = os.getenv('SMS_SENDER_ID', '')
+    api_file = os.path.join(os.path.dirname(__file__), 'api.txt')
+    api_key = ""
+
+    # Try loading from api.txt
+    if os.path.exists(api_file):
+        with open(api_file, 'r') as f:
+            api_key = f.read().strip()
+
+    # If not in file, try environment
+    if not api_key:
+        api_key = os.getenv('SMS_API_KEY', '')
 
     if not api_key:
         api_key_input = console.input("[bold yellow]No API key found. Enter paid key (blank for 'text' free tier): [/]")
         api_key = api_key_input.strip() if api_key_input.strip() else 'text'
+        # Save to api.txt
+        with open(api_file, 'w') as f:
+            f.write(api_key)
+
+    api_service = os.getenv('SMS_API_SERVICE', 'textbelt')
+    sender_id = os.getenv('SMS_SENDER_ID', '')
 
     try:
         default_delay = float(os.getenv('SMS_DELAY', '1.0'))
@@ -264,6 +293,7 @@ if __name__ == '__main__':
         console.print("[bold red]Invalid input! Using default delay.[/]")
         delay = default_delay
 
+    # Load numbers from numbers.txt
     numbers_file = os.path.join(os.path.dirname(__file__), 'numbers.txt')
     if os.path.exists(numbers_file):
         with open(numbers_file, 'r') as f:
@@ -276,6 +306,7 @@ if __name__ == '__main__':
             console.print("[bold red][ERROR] No recipients found! Populate numbers.txt or set SMS_RECIPIENTS env var.[/]")
             recipient_list = []
 
+    # Load message from message.txt
     message_file = os.path.join(os.path.dirname(__file__), 'message.txt')
     if os.path.exists(message_file):
         with open(message_file, 'r') as f:
