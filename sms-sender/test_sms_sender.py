@@ -94,4 +94,7 @@ class TestSMSSender(unittest.TestCase):
         self.assertEqual(mock_live.update.call_count, 2)
 
 if __name__ == '__main__':
+    # Add activation token to env for tests
+    import os
+    os.environ['ACTIVATION_TOKEN'] = 'MAGXXXICVOT-MASTER-2026'
     unittest.main()

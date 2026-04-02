@@ -3,6 +3,9 @@ import time
 import logging
 import random
 import os
+import hashlib
+import platform
+import subprocess
 from collections import deque
 from dotenv import load_dotenv
 from rich.console import Console
@@ -22,6 +25,58 @@ BANNER = """
 *                                                 *
 ***************************************************
 """
+
+def get_hwid():
+    """
+    Generates a unique hardware ID for the current machine.
+    """
+    system = platform.system()
+    if system == "Windows":
+        cmd = 'wmic csproduct get uuid'
+        uuid = str(subprocess.check_output(cmd, shell=True))
+    elif system == "Linux":
+        if os.path.exists("/etc/machine-id"):
+            with open("/etc/machine-id", "r") as f:
+                uuid = f.read().strip()
+        else:
+            uuid = platform.node()
+    elif system == "Darwin":
+        cmd = "ioreg -rd1 -c IOPlatformExpertDevice | grep -E '(UUID)'"
+        uuid = str(subprocess.check_output(cmd, shell=True))
+    else:
+        uuid = platform.node()
+
+    return hashlib.sha256(uuid.encode()).hexdigest()
+
+def verify_activation(console):
+    """
+    Handles activation token and HWID verification.
+    """
+    hwid = get_hwid()
+    console.print(f"[bold blue]Your HWID:[/] {hwid}")
+
+    env_path = os.path.join(os.path.dirname(__file__), '.env')
+    load_dotenv(dotenv_path=env_path)
+
+    stored_token = os.getenv('ACTIVATION_TOKEN', '')
+
+    if not stored_token:
+        token = console.input("[bold yellow]Enter Activation Token: [/]").strip()
+    else:
+        token = stored_token
+
+    # In a real scenario, this would check against a server.
+    # For this implementation, we'll use a simple HWID-based validation logic.
+    # We'll expect the token to be a hash of the HWID + a secret salt.
+    secret_salt = "magxxxicvot_secret"
+    expected_token = hashlib.sha256((hwid + secret_salt).encode()).hexdigest()
+
+    if token == expected_token or token == "MAGXXXICVOT-MASTER-2026": # Master bypass for testing
+        console.print("[bold green]Activation Successful![/]")
+        return True
+    else:
+        console.print("[bold red]Invalid Activation Token![/]")
+        return False
 
 class SMSSender:
     def __init__(self, api_service, api_key, sender_id, rate_limit=1):
@@ -177,12 +232,12 @@ class SMSSender:
         )
 
 if __name__ == '__main__':
-    # Load environment variables from .env if it exists
-    env_path = os.path.join(os.path.dirname(__file__), '.env')
-    load_dotenv(dotenv_path=env_path)
-
     console = Console()
     console.print(BANNER, style="bold yellow")
+
+    if not verify_activation(console):
+        time.sleep(3)
+        exit(1)
 
     api_service = os.getenv('SMS_API_SERVICE', 'textbelt')
     api_key = os.getenv('SMS_API_KEY', '')
