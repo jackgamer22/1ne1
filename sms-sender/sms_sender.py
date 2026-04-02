@@ -34,7 +34,7 @@ def get_hwid():
     try:
         if system == "Windows":
             cmd = 'wmic csproduct get uuid'
-            uuid = str(subprocess.check_output(cmd, shell=True))
+            uuid = subprocess.check_output(cmd, shell=True).decode('utf-8').strip()
         elif system == "Linux":
             if os.path.exists("/etc/machine-id"):
                 with open("/etc/machine-id", "r") as f:
@@ -43,7 +43,7 @@ def get_hwid():
                 uuid = platform.node()
         elif system == "Darwin":
             cmd = "ioreg -rd1 -c IOPlatformExpertDevice | grep -E '(UUID)'"
-            uuid = str(subprocess.check_output(cmd, shell=True))
+            uuid = subprocess.check_output(cmd, shell=True).decode('utf-8').strip()
         else:
             uuid = platform.node()
     except Exception:
