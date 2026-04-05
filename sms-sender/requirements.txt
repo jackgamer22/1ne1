@@ -1,0 +1,4 @@
+requests
+twilio
+rich
+python-dotenv
